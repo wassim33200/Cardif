@@ -15,5 +15,11 @@ headless = true
 enableCORS = true
 enableXsrfProtection = true
 
+[client]
+# Streamlit's "Deploy" button and developer menu are meaningless here and only
+# invite a colleague to click something that cannot help them.
+toolbarMode = "minimal"
+showErrorDetails = false
+
 [theme]
 base = "light"

@@ -200,18 +200,26 @@ def read_meta(path: Path, banks: Banks) -> FileMeta:
         period_confidence=confidence,
     )
     if code is None:
-        meta.notes.append(f"folder '{folder}' matches no bank in banks.yaml")
+        meta.notes.append(
+            f"Le dossier « {folder} » ne correspond à aucune banque enregistrée."
+        )
     if method == "unresolved":
         if month is not None and year is None:
-            meta.notes.append("month recognised but no year in filename or folder")
+            meta.notes.append(
+                "Le mois est reconnu mais l'année est absente du nom du fichier "
+                "comme du dossier."
+            )
         elif month is None and year is not None:
-            meta.notes.append("year recognised but no month in filename")
+            meta.notes.append("L'année est reconnue mais le mois est absent du nom.")
         else:
-            meta.notes.append("no period pattern matched the filename")
+            meta.notes.append(
+                "Aucun mois n'a pu être lu dans le nom du fichier."
+            )
     elif year is not None and fallback is not None and year != fallback:
         # Not an error — a December file can be delivered in January — but worth saying.
         meta.notes.append(
-            f"filename year {year} differs from folder year {fallback}"
+            f"Le nom du fichier indique {year} alors que le dossier indique "
+            f"{fallback}. Ce n'est pas forcément une erreur."
         )
     return meta
 
@@ -237,7 +245,8 @@ def scan(root: Path, banks: Banks) -> list[FileMeta]:
         meta = read_meta(path, banks)
         if path.suffix.lower() == ".xls":
             meta.notes.append(
-                "legacy .xls format: requires the 'xls' extra (python-calamine)"
+                "Ancien format .xls : enregistrez ce fichier au format .xlsx depuis "
+                "Excel (Fichier ▸ Enregistrer sous ▸ Classeur Excel)."
             )
         out.append(meta)
     return out

@@ -281,17 +281,31 @@ def process_file(
     profile_name = profile_name or config.settings.warehouse.profile
     result = FileResult(meta=meta)
 
+    # Messages here are read by people who did not write this tool, so each one says
+    # what happened and what to do about it, in the language of the files.
     if meta.bank_code is None:
-        result.error = "bank could not be resolved from the folder name"
+        result.error = (
+            f"Banque inconnue : le dossier « {meta.path.parent.name} » ne correspond à "
+            "aucune banque enregistrée. Renommez le dossier avec le nom de la banque "
+            "(par exemple « BNA 2025 »), ou ajoutez la banque dans la configuration."
+        )
         return result
     if meta.period is None:
-        result.error = "reporting period could not be resolved from the filename"
+        result.error = (
+            f"Mois introuvable : impossible de lire un mois dans le nom du fichier "
+            f"« {meta.path.name} ». Renommez-le en y mettant le mois, par exemple "
+            "« Ventes_Mars_2025.xlsx » ou « ventes_03_2025.xlsx »."
+        )
         return result
 
     try:
         workbook = load_workbook(meta.path, data_only=True)
-    except Exception as exc:                      # noqa: BLE001 - reported, not raised
-        result.error = f"could not open workbook: {exc}"
+    except Exception:                             # noqa: BLE001 - reported, not raised
+        result.error = (
+            "Fichier illisible : Excel n'arrive pas à ouvrir ce fichier. Il est "
+            "probablement abîmé ou incomplet (copie interrompue). Ouvrez-le dans Excel "
+            "pour vérifier, ou redemandez-le à la banque."
+        )
         return result
 
     try:
@@ -299,7 +313,8 @@ def process_file(
         result.sheet = sheet_name
         if len(workbook.sheetnames) > 1:
             result.notes.append(
-                f"workbook has {len(workbook.sheetnames)} sheets; used {sheet_name!r}"
+                f"Le fichier contient {len(workbook.sheetnames)} feuilles ; "
+                f"c'est « {sheet_name} » qui a été utilisée."
             )
 
         vocabulary = set(mapper.seed) | set(config.aliases.global_)
@@ -309,7 +324,11 @@ def process_file(
         result.table = table
 
         if not table.rows:
-            result.error = "; ".join(table.notes) or "no data rows found"
+            result.error = (
+                "Aucun tableau de ventes trouvé dans ce fichier. Vérifiez qu'il "
+                "contient bien une ligne d'en-têtes (N° contrat, prime, date…) suivie "
+                "des ventes, et qu'il n'est pas vide."
+            )
             return result
 
         # A column of uncalculated formulas reads as entirely empty and would otherwise
@@ -326,11 +345,12 @@ def process_file(
             lost = [c for c in dropped_empty if c in formula_columns]
             if lost:
                 result.error = (
-                    "these columns contain formulas whose results were never saved: "
-                    + ", ".join(lost)
-                    + ". Open the file in Excel and save it so the values are stored, "
-                    "then process it again. Consolidating it as-is would lose these "
-                    "columns entirely."
+                    "Colonnes calculées non enregistrées : "
+                    + ", ".join(f"« {name} »" for name in lost)
+                    + ". Ces colonnes contiennent des formules dont le résultat n'a "
+                    "jamais été enregistré, elles sont donc vides à la lecture. "
+                    "Solution : ouvrez le fichier dans Excel, puis enregistrez-le "
+                    "(Ctrl+S) et relancez. Sans cela ces colonnes seraient perdues."
                 )
                 return result
 
@@ -358,7 +378,7 @@ def process_file(
 
         if missing:
             result.notes.append(
-                "required fields absent from this file: " + ", ".join(missing)
+                "Colonnes obligatoires absentes de ce fichier : " + ", ".join(missing)
             )
     finally:
         workbook.close()

@@ -13,7 +13,11 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+RACINE = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(RACINE / "src"))
+sys.path.insert(0, str(RACINE / "app"))
+
+from composants import etapes, exiger_un_dossier   # noqa: E402
 
 from cardif.config import load_config          # noqa: E402
 from cardif.filemeta import scan               # noqa: E402
@@ -21,18 +25,20 @@ from cardif.llm import LocalModel              # noqa: E402
 from cardif.store import Warehouse, WarehouseCorrupt   # noqa: E402
 
 st.set_page_config(page_title="Fichiers", page_icon="📁", layout="wide")
-st.title("1 · Fichiers détectés")
+st.title("1 · Vérifier les fichiers")
+etapes(1)
+st.caption(
+    "L'outil lit le nom de chaque dossier pour savoir de quelle banque il s'agit, "
+    "et le nom de chaque fichier pour savoir de quel mois. Rien n'est encore ouvert."
+)
 
 state = st.session_state
-root = state.get("data_root", "")
-if not root or not Path(root).exists():
-    st.warning("Indiquez un dossier de données valide dans la barre latérale.")
-    st.stop()
+root = exiger_un_dossier()
 
 config = load_config(state.get("config_dir", "config"))
 metas = scan(Path(root), config.banks)
 if not metas:
-    st.error(f"Aucun classeur trouvé sous {root}")
+    st.error("Aucun fichier Excel trouvé dans ce dossier.")
     st.stop()
 
 warehouse = Warehouse(config, state.get("warehouse_dir", "warehouse"), state.get("profile"))
@@ -62,20 +68,30 @@ unresolved = [m for m in metas if not m.resolved]
 new_or_changed = [m for m in metas if status[str(m.path)] != "unchanged"]
 
 a, b, c = st.columns(3)
-a.metric("Classeurs", len(metas))
-b.metric("À traiter", len(new_or_changed))
-c.metric("Non résolus", len(unresolved), delta=None if not unresolved else "à corriger")
+a.metric("Fichiers trouvés", len(metas))
+b.metric("Nouveaux à traiter", len(new_or_changed))
+c.metric("Problèmes", len(unresolved))
 
-st.dataframe(frame, use_container_width=True, hide_index=True)
+if not unresolved:
+    st.success(
+        "Chaque fichier est bien rattaché à une banque et à un mois. "
+        "Vous pouvez passer à l'étape suivante."
+    )
+    st.page_link("pages/2_Colonnes.py", label="Étape 2 · Colonnes ▶", icon="🔤")
+
+with st.expander("Voir le détail des fichiers", expanded=bool(unresolved)):
+    st.dataframe(frame, use_container_width=True, hide_index=True)
 
 if unresolved:
-    st.subheader("Fichiers à rattacher manuellement")
-    st.caption(
-        "Le nom du fichier ou du dossier ne permet pas de déduire la banque ou le mois. "
-        "Corrigez-les ici ; le modèle local peut proposer une lecture du nom de fichier."
+    st.subheader(f"{len(unresolved)} fichier·s à corriger")
+    st.warning(
+        "Pour ces fichiers, le nom ne permet pas de savoir de quelle banque ou de "
+        "quel mois il s'agit. **Le plus simple est de renommer le fichier** en y "
+        "mettant le mois, par exemple « Ventes_Mars_2025.xlsx », puis de recharger "
+        "cette page. Sinon, indiquez-le à la main ci-dessous."
     )
 
-    if state.get("use_model") and st.button("Proposer une période avec le modèle local"):
+    if state.get("use_model") and st.button("Demander à l'assistant de deviner le mois"):
         try:
             model = LocalModel(config.settings.llm)
             if model.available():
@@ -86,9 +102,15 @@ if unresolved:
                             state.setdefault("period_overrides", {})[str(meta.path)] = answer.value
                             st.info(f"{meta.path.name} → {answer.value} ({answer.reason})")
             else:
-                st.warning("Modèle injoignable.")
-        except Exception as exc:                  # noqa: BLE001
-            st.error(f"Modèle indisponible : {exc}")
+                st.info(
+                    "L'assistant local n'est pas démarré. Indiquez le mois à la main "
+                    "ci-dessous, ou renommez les fichiers."
+                )
+        except Exception:                         # noqa: BLE001
+            st.info(
+                "L'assistant local n'est pas disponible. Indiquez le mois à la main "
+                "ci-dessous, ou renommez les fichiers."
+            )
 
     for meta in unresolved:
         with st.expander(meta.path.name, expanded=True):
@@ -108,9 +130,8 @@ if unresolved:
                 state.setdefault("file_overrides", {})[str(meta.path)] = {
                     "bank": chosen, "period": period,
                 }
-    st.info(
-        "Les corrections saisies ici s'appliquent au traitement. Pour qu'elles soient "
-        "permanentes, renommez le fichier ou ajoutez la banque dans `banks.yaml`."
+    st.caption(
+        "Ces corrections valent pour cette session. Pour qu'elles tiennent d'un mois "
+        "sur l'autre, renommez le fichier."
     )
-else:
-    st.success("Chaque fichier est rattaché à une banque et à un mois.")
+    st.page_link("pages/2_Colonnes.py", label="Étape 2 · Colonnes ▶", icon="🔤")

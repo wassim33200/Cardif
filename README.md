@@ -32,11 +32,16 @@ pip install --no-index --find-links wheels -e .
 
 ## Use
 
-```bash
-streamlit run app/Home.py        # the daily driver, on localhost only
-```
+For colleagues: double-click **`Installer.bat`** once, then **`Lancer Cardif.bat`**
+(Windows) or the `.command` equivalents on macOS. `GUIDE.md` is written for them; this
+README is not.
 
-Point it at the folder holding your bank folders and follow the pages in order.
+The app opens on localhost, offers to generate sample data on first run, and walks
+through Fichiers → Colonnes → Consolidation.
+
+```bash
+streamlit run app/Accueil.py        # same thing, from a terminal
+```
 
 Or from the command line:
 

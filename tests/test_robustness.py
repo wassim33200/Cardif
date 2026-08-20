@@ -50,7 +50,7 @@ class TestUnreadableFiles:
         result = _process(hostile[case], config, mapper)
         assert not result.ok
         assert result.error
-        assert "workbook" in result.error.lower()
+        assert "illisible" in result.error.lower()
 
     def test_a_broken_file_does_not_stop_the_others(self, hostile, config):
         """One corrupt file in a folder must not cost you the whole month."""
@@ -69,7 +69,7 @@ class TestEmptyOrUnusable:
     def test_reported_not_crashed(self, hostile, config, mapper, case):
         result = _process(hostile[case], config, mapper)
         assert not result.ok
-        assert result.error
+        assert "tableau de ventes" in result.error.lower()
 
 
 class TestUncachedFormulas:
@@ -88,6 +88,7 @@ class TestUncachedFormulas:
         result = _process(hostile["uncached_formulas"], config, mapper)
         assert "Prime totale" in result.error
         assert "Excel" in result.error
+        assert "Ctrl+S" in result.error
 
     def test_a_file_with_cached_results_is_processed_normally(
         self, tmp_path, config, mapper
@@ -345,7 +346,9 @@ class TestFilenameEdges:
         gen_hostile.valid_baseline(path)
         result = _process(path, config, mapper)
         assert not result.ok
-        assert "period" in result.error.lower()
+        assert "mois" in result.error.lower()
+        # The message must show what a good filename looks like, not just complain.
+        assert "Ventes_Mars_2025" in result.error
 
     def test_unknown_bank_folder_is_reported(self, tmp_path, config, mapper):
         folder = tmp_path / "BanqueInconnue 2025"
@@ -354,7 +357,8 @@ class TestFilenameEdges:
         gen_hostile.valid_baseline(path)
         result = _process(path, config, mapper)
         assert not result.ok
-        assert "bank" in result.error.lower()
+        assert "banque" in result.error.lower()
+        assert "BanqueInconnue" in result.error
 
     def test_excel_lock_files_are_skipped(self, tmp_path, config):
         folder = tmp_path / "BNA 2025"
@@ -597,3 +601,50 @@ class TestScaling:
         report = validate(frame, config, "detaille")
         mismatches = [f for f in report.flags if f.code == "premium_mismatch"]
         assert len(mismatches) == 137
+
+
+class TestMessagesAreUsable:
+    """Every message a colleague can see must be French and must say what to do.
+
+    These are read by people who did not write the tool and cannot read a traceback.
+    A message that only states a fact ("period unresolved") leaves them stuck.
+    """
+
+    ENGLISH_GIVEAWAYS = (
+        " the ", " could not ", " workbook", " filename", " missing ", " rows found",
+    )
+
+    def _messages(self, config, mapper, hostile) -> list[str]:
+        found = []
+        for path in hostile.values():
+            result = _process(path, config, mapper)
+            if result.error:
+                found.append(result.error)
+            found.extend(result.notes)
+        return found
+
+    def test_no_english_leaks_into_file_errors(self, hostile, config, mapper):
+        for message in self._messages(config, mapper, hostile):
+            lowered = " " + message.lower()
+            leaked = [w for w in self.ENGLISH_GIVEAWAYS if w in lowered]
+            assert not leaked, f"English in a user-facing message: {message!r}"
+
+    def test_every_failure_message_suggests_an_action(self, hostile, config, mapper):
+        """A message that only names the problem leaves a non-technical user stuck."""
+        actionable = (
+            "renommez", "ouvrez", "vérifiez", "enregistrez", "ajoutez", "solution",
+            "redemandez", "par exemple",
+        )
+        for path in hostile.values():
+            result = _process(path, config, mapper)
+            if not result.error:
+                continue
+            assert any(word in result.error.lower() for word in actionable), (
+                f"no remedy offered: {result.error!r}"
+            )
+
+    def test_messages_do_not_name_internal_files(self, hostile, config, mapper):
+        """"banks.yaml" means nothing to someone who has never opened the folder."""
+        for message in self._messages(config, mapper, hostile):
+            assert ".yaml" not in message
+            assert ".py" not in message

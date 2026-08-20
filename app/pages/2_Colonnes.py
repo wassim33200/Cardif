@@ -16,33 +16,39 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+RACINE = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(RACINE / "src"))
+sys.path.insert(0, str(RACINE / "app"))
+
+from composants import etapes, exiger_un_dossier   # noqa: E402
 
 from cardif.config import load_config          # noqa: E402
 from cardif.pipeline import profile_headers, run  # noqa: E402
 
-st.set_page_config(page_title="En-têtes", page_icon="🔤", layout="wide")
-st.title("2 · En-têtes des colonnes")
+st.set_page_config(page_title="Colonnes", page_icon="🔤", layout="wide")
+st.title("2 · Reconnaître les colonnes")
+etapes(2)
+st.caption(
+    "Chaque banque nomme ses colonnes à sa façon. L'outil les reconnaît tout seul "
+    "dans la grande majorité des cas ; il ne vous demande que ce dont il n'est pas sûr."
+)
 
 state = st.session_state
-root = state.get("data_root", "")
-if not root or not Path(root).exists():
-    st.warning("Indiquez un dossier de données valide dans la barre latérale.")
-    st.stop()
+root = exiger_un_dossier()
 
 config = load_config(state.get("config_dir", "config"))
 profile_name = state.get("profile", config.settings.warehouse.profile)
 
-inventory_tab, review_tab = st.tabs(["Inventaire", "À décider"])
+review_tab, inventory_tab = st.tabs(["À vérifier", "Toutes les colonnes"])
 
 # ---------------------------------------------------------------------------------
 with inventory_tab:
     st.caption(
-        "Toutes les variantes d'en-tête rencontrées, toutes banques et tous mois "
-        "confondus. C'est à partir de cette liste que l'on choisit les colonnes "
-        "du fichier consolidé."
+        "Tous les noms de colonnes rencontrés, toutes banques et tous mois confondus, "
+        "avec ce que l'outil en a compris. Utile pour vérifier, pas nécessaire au "
+        "quotidien."
     )
-    if st.button("Analyser les en-têtes", type="primary"):
+    if st.button("Analyser toutes les colonnes"):
         with st.spinner("Lecture de chaque classeur…"):
             state["inventory"] = profile_headers(root, config)
 
@@ -52,7 +58,7 @@ with inventory_tab:
         unknown = inventory[inventory["champ_propose"] == "(non résolu)"]
 
         a, b, c = st.columns(3)
-        a.metric("En-têtes distincts", len(inventory))
+        a.metric("Noms de colonnes différents", len(inventory))
         b.metric("Reconnus", len(known))
         c.metric("Inconnus", len(unknown))
 
@@ -74,7 +80,7 @@ with review_tab:
         "ne correspond pas au champ proposé."
     )
 
-    if st.button("Chercher les en-têtes à décider", type="primary"):
+    if st.button("Vérifier les colonnes", type="primary"):
         with st.spinner("Traitement…"):
             state["review_run"] = run(
                 root, config, profile_name,
@@ -84,7 +90,7 @@ with review_tab:
 
     outcome = state.get("review_run")
     if outcome is None:
-        st.info("Lancez la recherche pour voir ce qui reste à décider.")
+        st.info("Cliquez sur **Vérifier les colonnes** pour commencer.")
         st.stop()
 
     # Collect one entry per distinct header, with the files it appears in.
@@ -104,12 +110,17 @@ with review_tab:
 
     if not pending:
         st.success(
-            "Rien à décider : tous les en-têtes sont résolus et cohérents avec "
-            "leur contenu."
+            "Toutes les colonnes ont été reconnues. Rien à faire ici : passez à "
+            "l'étape suivante."
         )
+        st.page_link("pages/3_Consolidation.py", label="Étape 3 · Consolidation ▶",
+                     icon="📦")
         st.stop()
 
-    st.warning(f"{len(pending)} en-tête(s) à confirmer.")
+    st.warning(
+        f"**{len(pending)} colonne·s à confirmer.** Dites à quoi elles correspondent : "
+        "l'outil s'en souviendra et ne vous le redemandera plus jamais."
+    )
     fields = list(config.schema_.fields)
 
     for normalized, entry in sorted(pending.items(), key=lambda kv: -kv[1]["files"]):
@@ -155,7 +166,7 @@ with review_tab:
                 disabled=len(entry["banks"]) != 1,
             )
 
-            if st.button("Enregistrer", key=f"save_{normalized}"):
+            if st.button("Confirmer", key=f"save_{normalized}", type="primary"):
                 target = "__ignore__" if choice.startswith("(") else choice
                 if target != "__ignore__":
                     bank = None
@@ -164,8 +175,8 @@ with review_tab:
                     config.aliases.learn(normalized, target, bank)
                     config.save_aliases()
                     st.success(
-                        f"« {entry['header']} » → {target}. "
-                        "Cette décision est enregistrée ; elle ne sera plus redemandée."
+                        f"« {entry['header']} » enregistrée. "
+                        "Elle sera reconnue automatiquement les prochaines fois."
                     )
                 else:
                     state.setdefault("overrides", {})[normalized] = "__ignore__"

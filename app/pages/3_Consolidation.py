@@ -13,7 +13,11 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+RACINE = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(RACINE / "src"))
+sys.path.insert(0, str(RACINE / "app"))
+
+from composants import etapes, exiger_un_dossier, pour_affichage   # noqa: E402
 
 from cardif.audit import write_audit           # noqa: E402
 from cardif.config import load_config          # noqa: E402
@@ -23,18 +27,31 @@ from cardif.store import SchemaContractError, Warehouse, WarehouseCorrupt   # no
 from cardif.validate import reconciliation_table          # noqa: E402
 
 st.set_page_config(page_title="Consolidation", page_icon="📦", layout="wide")
-st.title("3 · Consolidation")
+st.title("3 · Consolider")
+etapes(3)
+st.caption(
+    "L'aperçu montre le résultat sans rien enregistrer. Rien n'est ajouté à la base "
+    "tant que vous n'avez pas cliqué sur le bouton de confirmation, en bas."
+)
 
 state = st.session_state
-root = state.get("data_root", "")
-if not root or not Path(root).exists():
-    st.warning("Indiquez un dossier de données valide dans la barre latérale.")
-    st.stop()
+root = exiger_un_dossier()
 
 config = load_config(state.get("config_dir", "config"))
 profile_name = state.get("profile", config.settings.warehouse.profile)
 warehouse_dir = state.get("warehouse_dir", "warehouse")
 warehouse = Warehouse(config, warehouse_dir, profile_name)
+
+# Shown once after a save. The page reruns so the counters at the top are current
+# rather than still showing the files as new.
+confirmation = state.pop("dernier_enregistrement", None)
+if confirmation:
+    st.success(confirmation["message"])
+    for note in confirmation.get("notes", []):
+        st.info(note)
+    st.markdown(confirmation["chemins"])
+    st.page_link("Accueil.py", label="Retour à l'accueil", icon="🏠")
+    st.divider()
 
 metas = scan(Path(root), config.banks)
 try:
@@ -45,21 +62,25 @@ except WarehouseCorrupt as exc:
 todo = buckets["new"] + buckets["changed"]
 
 a, b, c = st.columns(3)
-a.metric("Déjà intégrés", len(buckets["unchanged"]))
+a.metric("Déjà dans la base", len(buckets["unchanged"]))
 b.metric("Nouveaux", len(buckets["new"]))
-c.metric("Modifiés", len(buckets["changed"]))
+c.metric("Modifiés depuis", len(buckets["changed"]))
 
 everything = st.checkbox(
-    "Retraiter tous les fichiers", value=not todo,
-    help="Par défaut seuls les fichiers nouveaux ou modifiés sont traités.",
+    "Tout retraiter depuis le début", value=not todo,
+    help="Normalement inutile : seuls les fichiers nouveaux ou modifiés sont traités. "
+         "Retraiter tout ne crée pas de doublons.",
 )
 selection = [m.path for m in metas] if everything else todo
 
 if not selection:
-    st.success("Rien de nouveau à traiter.")
+    st.success(
+        "Tous les fichiers de ce dossier sont déjà dans la base. "
+        "Déposez le fichier du mois suivant, puis revenez ici."
+    )
     st.stop()
 
-if st.button(f"Prévisualiser ({len(selection)} fichier·s)", type="primary"):
+if st.button(f"Voir le résultat ({len(selection)} fichier·s)", type="primary"):
     with st.spinner("Traitement…"):
         state["run"] = run(
             root, config, profile_name,
@@ -70,59 +91,78 @@ if st.button(f"Prévisualiser ({len(selection)} fichier·s)", type="primary"):
 
 outcome = state.get("run")
 if outcome is None:
-    st.info("Lancez une prévisualisation. Rien n'est écrit à ce stade.")
+    st.info("Cliquez sur le bouton ci-dessus. Rien ne sera enregistré à ce stade.")
     st.stop()
 
-st.subheader("Résultat de la prévisualisation")
+st.subheader("Résultat")
 st.caption(outcome.summary_line())
 
 if outcome.skipped:
-    with st.expander(f"{len(outcome.skipped)} fichier(s) non traité(s)", expanded=True):
-        for path, reason in outcome.skipped:
-            st.error(f"**{Path(path).name}** — {reason}")
+    st.error(
+        f"**{len(outcome.skipped)} fichier·s n'ont pas pu être traités.** "
+        "Ils ne seront pas ajoutés à la base ; les autres le seront normalement."
+    )
+    for path, reason in outcome.skipped:
+        with st.expander(f"❌ {Path(path).name}"):
+            st.write(reason)
 
 unresolved = outcome.unresolved_headers()
 if unresolved:
     st.warning(
-        f"{len(unresolved)} en-tête(s) non résolu(s) : "
-        + ", ".join(f"« {h} » ×{n}" for h, n in unresolved.most_common(6))
-        + ". Passez par la page **En-têtes** pour les trancher, sinon ces colonnes "
-        "resteront vides."
+        f"**{len(unresolved)} colonne·s ne sont pas reconnues** : "
+        + ", ".join(f"« {h} »" for h, _ in unresolved.most_common(6))
+        + ". Ces colonnes seront vides dans la base. Passez par l'étape "
+        "**Colonnes** pour dire à quoi elles correspondent."
     )
+    st.page_link("pages/2_Colonnes.py", label="◀ Retour à l'étape 2 · Colonnes",
+                 icon="🔤")
 
 if outcome.frame is None or outcome.frame.empty:
     st.stop()
 
 preview, flags_tab, reconciliation, dropped = st.tabs(
-    ["Aperçu", "Anomalies", "Rapprochement", "Supprimé"]
+    ["Aperçu du résultat", "À vérifier", "Totaux par mois", "Ce qui a été retiré"]
 )
 
 with preview:
-    st.caption(f"{len(outcome.frame)} lignes — 200 premières affichées")
-    labels = config.schema_.label_map(profile_name)
+    st.caption(
+        f"{len(outcome.frame)} ventes au total — les 200 premières sont affichées."
+    )
+    technique = st.checkbox(
+        "Afficher aussi la provenance de chaque ligne",
+        help="Le fichier et la ligne d'où vient chaque vente. Toujours enregistré "
+             "dans la base, même quand ce n'est pas affiché ici.",
+    )
     st.dataframe(
-        outcome.frame.head(200).rename(columns=labels),
+        pour_affichage(outcome.frame.head(200), config, profile_name, technique),
         use_container_width=True, hide_index=True,
     )
 
 with flags_tab:
     report = outcome.validation
     if not report.flags:
-        st.success("Aucune anomalie détectée.")
+        st.success("Rien d'anormal détecté.")
     else:
         a, b = st.columns(2)
-        a.metric("Erreurs", report.errors)
-        b.metric("Avertissements", report.warnings)
+        a.metric("À corriger", report.errors)
+        b.metric("À regarder", report.warnings)
         st.caption(
-            "Les lignes signalées restent dans la base : un signalement demande une "
-            "vérification, il ne supprime rien."
+            "**Les lignes signalées ne sont pas supprimées.** Un signalement vous "
+            "demande de vérifier, il n'enlève jamais une vente de la base."
         )
-        st.dataframe(report.to_frame(), use_container_width=True, hide_index=True)
+        frame = report.to_frame()
+        st.dataframe(
+            frame.rename(columns={
+                "severity": "niveau", "code": "type", "message": "explication",
+                "source_file": "fichier", "source_row": "ligne", "field": "colonne",
+            }).drop(columns=["row_hash"], errors="ignore"),
+            use_container_width=True, hide_index=True,
+        )
 
 with reconciliation:
     st.caption(
-        "Totaux par banque et par mois, à comparer avec les états transmis par "
-        "chaque banque."
+        "Totaux par banque et par mois. **Comparez-les avec les états que les banques "
+        "vous ont envoyés** : c'est la preuve que rien n'a été perdu en route."
     )
     st.dataframe(
         reconciliation_table(outcome.frame), use_container_width=True, hide_index=True
@@ -144,22 +184,28 @@ with dropped:
                 "position": f"colonne {col.letter}", "motif": col.reason,
                 "contenu": col.header,
             })
-    st.caption("Tout ce qui a été retiré, avec sa position dans le fichier d'origine.")
+    st.caption(
+        "Lignes vides, lignes TOTAL et chiffres de brouillon retirés, avec leur "
+        "position exacte dans le fichier d'origine si vous voulez vérifier."
+    )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 # ---------------------------------------------------------------------------------
 st.divider()
-st.subheader("Écrire dans l'entrepôt")
+st.subheader("Enregistrer dans la base")
 
 errors = outcome.validation.errors
 if errors:
     st.error(
-        f"{errors} anomalie(s) de niveau erreur. Vérifiez-les dans l'onglet "
-        "**Anomalies** avant d'écrire."
+        f"**{errors} point·s à corriger** avant d'enregistrer. Regardez l'onglet "
+        "**À vérifier** ci-dessus : il explique chacun d'eux."
     )
-allow = st.checkbox("Écrire malgré les erreurs", value=False, disabled=not errors)
+    allow = st.checkbox("J'ai vérifié, enregistrer quand même", value=False)
+else:
+    allow = True
+    st.caption("Tout est en ordre. Vous pouvez enregistrer.")
 
-if st.button("Confirmer et écrire", type="primary", disabled=bool(errors) and not allow):
+if st.button("Enregistrer dans la base", type="primary", disabled=not allow):
     try:
         summary = commit(outcome, config, warehouse_dir)
     except (SchemaContractError, WarehouseCorrupt) as exc:
@@ -169,14 +215,19 @@ if st.button("Confirmer et écrire", type="primary", disabled=bool(errors) and n
     audit_path = Path(warehouse_dir) / "audit.xlsx"
     write_audit(audit_path, outcome.results, outcome.validation, outcome.frame)
 
-    st.success(
-        f"{summary['written']} lignes écrites "
-        f"(dont {summary['replaced']} remplacées). "
-        f"L'entrepôt contient maintenant {summary['total']} lignes."
-    )
-    st.caption(f"Rapport d'audit : {audit_path}")
-    st.caption(
-        f"Pour Power BI : {Path(warehouse_dir) / 'fact_ventes.parquet'} "
-        "avec dim_date, dim_banque et dim_produit."
-    )
+    state["dernier_enregistrement"] = {
+        "message": (
+            f"**Enregistré.** {summary['written']} ventes ajoutées"
+            + (f", dont {summary['replaced']} qui remplacent des versions précédentes"
+               if summary["replaced"] else "")
+            + f". La base contient maintenant {summary['total']} ventes."
+        ),
+        "notes": summary.get("skipped_xlsx", []),
+        "chemins": (
+            f"**Pour Power BI**, ouvrez ce fichier :\n\n"
+            f"`{Path(warehouse_dir) / 'fact_ventes.parquet'}`\n\n"
+            f"Le détail de ce qui a été nettoyé est dans `{audit_path}`."
+        ),
+    }
     state.pop("run", None)
+    st.rerun()
