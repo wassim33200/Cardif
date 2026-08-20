@@ -77,27 +77,33 @@ class BankStyle:
     the two-row merged header uncovered entirely on the first run.
     """
 
-    # (reports_breakdown, two_row_header, text_numbers, text_dates)
+    # (reports_breakdown, reports_total, two_row_header, text_numbers, text_dates)
+    #
+    # reports_breakdown without reports_total is the case the user described: a bank
+    # that sends "prime nette" and "frais" but no global premium, leaving the total to
+    # be derived. Without it in the corpus the derivation path is never exercised.
     TRAIT_MATRIX = [
-        (True,  True,  False, False),  # breakdown + merged two-row header
-        (False, False, True,  True),   # total only, everything as French text
-        (True,  False, True,  False),  # breakdown, text numbers, real dates
-        (False, False, False, True),   # total only, real numbers, text dates
-        (True,  True,  True,  True),   # every awkward trait at once
-        (False, False, False, False),  # the well-behaved bank
+        (True,  True,  True,  False, False),  # breakdown + total, merged two-row header
+        (False, True,  False, True,  True),   # total only, everything as French text
+        (True,  False, False, True,  False),  # breakdown WITHOUT a total: must derive
+        (False, True,  False, False, True),   # total only, real numbers, text dates
+        (True,  True,  True,  True,  True),   # every awkward trait at once
+        (True,  False, False, False, False),  # breakdown without a total, clean format
     ]
 
     def __init__(self, code: str, index: int, rng: random.Random):
         self.code = code
         traits = self.TRAIT_MATRIX[index % len(self.TRAIT_MATRIX)]
-        # Does this bank break the premium down, or only report the global figure?
+        # Does this bank break the premium down into nette + frais?
         self.reports_breakdown = traits[0]
+        # Does it report a global premium column at all?
+        self.reports_total = traits[1]
         # Uses a merged two-row header for the premium block.
-        self.two_row_header = traits[1]
+        self.two_row_header = traits[2]
         # Numbers written as French text ("1 234,56") rather than real numeric cells.
-        self.text_numbers = traits[2]
+        self.text_numbers = traits[3]
         # Dates as text rather than real Excel dates.
-        self.text_dates = traits[3]
+        self.text_dates = traits[4]
         # Optional columns stay random: their absence is a mapping concern, not a
         # parsing pathology, so full coverage is not required.
         self.has_capital = rng.random() < 0.8
@@ -110,8 +116,8 @@ class BankStyle:
         if self.has_agence:
             out.append("agence")
         if self.reports_breakdown:
-            out += ["prime_nette", "frais", "prime_totale"]
-        else:
+            out += ["prime_nette", "frais"]
+        if self.reports_total:
             out.append("prime_totale")
         if self.has_capital:
             out.append("capital_assure")
@@ -218,13 +224,15 @@ def write_month(path: Path, style: BankStyle, year: int, month: int,
         for f in fields:
             if f == "prime_nette":
                 start = col
+                span = 3 if style.reports_total else 2
                 ws.cell(row=header_row, column=start, value="Prime")
                 second_row[start] = "nette"
                 second_row[start + 1] = "frais"
-                second_row[start + 2] = "totale"
+                if style.reports_total:
+                    second_row[start + 2] = "totale"
                 ws.merge_cells(start_row=header_row, start_column=start,
-                               end_row=header_row, end_column=start + 2)
-                col += 3
+                               end_row=header_row, end_column=start + span - 1)
+                col += span
             elif f in {"frais", "prime_totale"}:
                 continue  # already covered by the merged block
             else:
@@ -237,7 +245,9 @@ def write_month(path: Path, style: BankStyle, year: int, month: int,
         order = []
         for f in fields:
             if f == "prime_nette":
-                order += ["prime_nette", "frais", "prime_totale"]
+                order += ["prime_nette", "frais"]
+                if style.reports_total:
+                    order.append("prime_totale")
             elif f in {"frais", "prime_totale"}:
                 continue
             else:
@@ -289,6 +299,8 @@ def write_month(path: Path, style: BankStyle, year: int, month: int,
         "headers": chosen,
         "two_row_header": style.two_row_header and "prime_nette" in fields,
         "trailing_junk_rows": trailing,
+        "reports_total": style.reports_total,
+        "reports_breakdown": style.reports_breakdown,
         "total_prime_totale": round(sum(r["prime_totale"] for r in rows), 2),
     }
 
