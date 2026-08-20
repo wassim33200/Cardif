@@ -1,0 +1,7 @@
+# Learned header -> canonical field map. Grows as the tool is used.
+# Keys are normalized headers (accent-folded, lowercased, punctuation collapsed).
+# `global` applies everywhere; a bank code section overrides it for that bank only.
+
+global: {}
+
+by_bank: {}

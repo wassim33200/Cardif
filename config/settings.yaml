@@ -1,0 +1,49 @@
+# Runtime settings. Nothing here reaches the network except the local model endpoint.
+
+llm:
+  enabled: true
+  # LM Studio / llama.cpp OpenAI-compatible server.
+  base_url: "http://localhost:1234/v1"
+  model: "local-model"
+  timeout_seconds: 60
+  # Confidence below this is treated as unresolved and handed to the human.
+  confidence_floor: 0.70
+  # When false (default) the model receives only header text and an anonymised type
+  # profile of the column. Turning this on sends up to `sample_size` raw cell values.
+  send_sample_values: false
+  sample_size: 5
+  # Refuses any non-loopback base_url unless explicitly disabled. See llm.py.
+  require_loopback: true
+
+matching:
+  # rapidfuzz token_set_ratio score above which a fuzzy hit is auto-accepted.
+  fuzzy_auto_accept: 92
+  # Below this, the header is not even offered as a suggestion.
+  fuzzy_suggest_floor: 70
+
+detection:
+  # How many rows from the top to consider as header candidates.
+  header_search_rows: 30
+  # A run of this many consecutive blank rows ends the data block.
+  blank_run_ends_table: 2
+  # Rows whose first cell matches these are cut (case/accent-insensitive).
+  terminator_patterns: ["total", "sous total", "sous-total", "somme", "cumul", "totaux"]
+  # Columns with a fill rate below this and no usable header are dropped.
+  min_column_fill_rate: 0.05
+
+validation:
+  # Absolute tolerance when checking prime_nette + frais == prime_totale.
+  premium_tolerance: 0.01
+  # A date_effet may precede mois_reception by this many months before it is flagged
+  # as a suspicious late declaration.
+  max_declaration_lag_months: 3
+  # Share of rows whose date_effet must fall in the filename's month before the
+  # filename-derived period is trusted.
+  period_agreement_threshold: 0.5
+
+warehouse:
+  path: "warehouse"
+  profile: "powerbi_2025"
+  write_xlsx: true
+  # Excel tops out just above a million rows; refuse rather than truncate silently.
+  xlsx_row_limit: 1000000

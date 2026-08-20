@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cardif"
+version = "0.1.0"
+description = "Offline consolidation of monthly bank life-insurance sales workbooks into a Power BI warehouse"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.1",
+    "openpyxl>=3.1",
+    "pyarrow>=14",
+    "rapidfuzz>=3.5",
+    "pydantic>=2.5",
+    "PyYAML>=6.0",
+    "streamlit>=1.30",
+]
+
+[project.optional-dependencies]
+xls = ["python-calamine>=0.2"]
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+cardif = "cardif.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

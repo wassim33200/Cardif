@@ -1,0 +1,39 @@
+# Folder name -> bank identity.
+#
+# `match` is matched case-insensitively against the folder name with accents folded and
+# the year stripped, so "BNA 2025", "bna_2024" and "BNA" all resolve to the same bank.
+# Adding a new bank is a config edit, never a code change.
+
+banks:
+  - code: BNA
+    label: "Banque Nationale Agricole"
+    match: ["bna"]
+
+  - code: BIAT
+    label: "Banque Internationale Arabe de Tunisie"
+    match: ["biat"]
+
+  - code: STB
+    label: "Société Tunisienne de Banque"
+    match: ["stb"]
+
+  - code: BH
+    label: "Banque de l'Habitat"
+    match: ["bh", "banque habitat"]
+
+  - code: ATB
+    label: "Arab Tunisian Bank"
+    match: ["atb"]
+
+  - code: UIB
+    label: "Union Internationale de Banques"
+    match: ["uib"]
+
+# Per-bank overrides applied after the generic pipeline.
+overrides: {}
+  # Example:
+  # BNA:
+  #   sheet_preference: ["Ventes", "Feuil1"]   # which sheet to prefer when several exist
+  #   header_search_rows: 40                   # look deeper for the header row
+  #   aliases:                                 # bank-specific header meanings
+  #     "montant": prime_totale
