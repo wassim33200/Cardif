@@ -134,16 +134,23 @@ class LLMSettings(BaseModel):
     enabled: bool = True
     base_url: str = "http://localhost:1234/v1"
     model: str = "local-model"
-    timeout_seconds: int = 60
-    confidence_floor: float = 0.70
+    timeout_seconds: int = Field(default=60, gt=0)
+    confidence_floor: float = Field(default=0.70, ge=0, le=1)
     send_sample_values: bool = False
-    sample_size: int = 5
+    sample_size: int = Field(default=5, ge=0, le=50)
     require_loopback: bool = True
 
 
 class MatchingSettings(BaseModel):
-    fuzzy_auto_accept: int = 92
-    fuzzy_suggest_floor: int = 70
+    fuzzy_auto_accept: int = Field(default=92, ge=0, le=100)
+    fuzzy_suggest_floor: int = Field(default=70, ge=0, le=100)
+
+    def model_post_init(self, _context: Any) -> None:
+        if self.fuzzy_suggest_floor > self.fuzzy_auto_accept:
+            raise ValueError(
+                "matching.fuzzy_suggest_floor cannot exceed fuzzy_auto_accept: "
+                "no header could ever be suggested without being auto-accepted first"
+            )
 
 
 class DetectionSettings(BaseModel):
@@ -159,16 +166,19 @@ class DetectionSettings(BaseModel):
 
 
 class ValidationSettings(BaseModel):
-    premium_tolerance: float = 0.01
-    max_declaration_lag_months: int = 3
-    period_agreement_threshold: float = 0.5
+    # A negative tolerance would make every reconciliation fail; a negative lag would
+    # flag every row. Both are silent disasters, so they are rejected at load.
+    premium_tolerance: float = Field(default=0.01, ge=0)
+    max_declaration_lag_months: int = Field(default=3, ge=0)
+    period_agreement_threshold: float = Field(default=0.5, ge=0, le=1)
 
 
 class WarehouseSettings(BaseModel):
     path: str = "warehouse"
     profile: str = "powerbi_2025"
     write_xlsx: bool = True
-    xlsx_row_limit: int = 1_000_000
+    # Excel tops out just above a million rows. Refusing beats truncating in silence.
+    xlsx_row_limit: int = Field(default=1_000_000, gt=0, le=1_048_575)
 
 
 class Settings(BaseModel):
@@ -225,6 +235,17 @@ class Config(BaseModel):
     config_dir: Path
 
     model_config = {"populate_by_name": True, "arbitrary_types_allowed": True}
+
+    def model_post_init(self, _context: Any) -> None:
+        # Catching this at load turns a KeyError deep in the pipeline into a clear
+        # message about the line of settings.yaml that is wrong.
+        profile = self.settings.warehouse.profile
+        if profile not in self.schema_.profiles:
+            raise ValueError(
+                f"settings.yaml names the export profile {profile!r}, which does not "
+                f"exist in schema.yaml. Available profiles: "
+                f"{sorted(self.schema_.profiles)}"
+            )
 
     def save_aliases(self) -> None:
         """Persist learned mappings back to disk."""

@@ -20,16 +20,24 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 
+from collections.abc import Callable
+
 from .config import Config
 
 FACT_NAME = "fact_ventes"
 MANIFEST_NAME = "_manifest.json"
+
+
+class WarehouseCorrupt(RuntimeError):
+    """Raised when the fact table cannot be read, with the route to recovery."""
 
 
 class SchemaContractError(RuntimeError):
@@ -85,13 +93,17 @@ class Manifest:
         )
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "profile": self.profile,
             "schema_columns": self.schema_columns,
             "files": {k: asdict(v) for k, v in sorted(self.files.items())},
         }
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        text = json.dumps(payload, indent=2, ensure_ascii=False)
+        atomic_write(
+            path,
+            lambda target: target.write_text(text, encoding="utf-8"),
+            keep_backup=False,
+        )
 
     def status(self, path: Path) -> str:
         """Whether a file is ``new``, ``unchanged`` or ``changed`` since last ingest."""
@@ -99,6 +111,44 @@ class Manifest:
         if entry is None:
             return "new"
         return "unchanged" if entry.content_hash == file_hash(path) else "changed"
+
+
+def atomic_write(path: Path, write: "Callable[[Path], None]", keep_backup: bool = True) -> None:
+    """Write a file so that an interruption cannot destroy the previous version.
+
+    The naive approach -- writing straight over ``fact_ventes.parquet`` -- means a crash,
+    a full disk, or a killed process mid-write leaves a truncated file. Parquet stores
+    its footer at the end, so a truncated file is not partially readable: it is entirely
+    unreadable, and every month ever ingested is gone.
+
+    Writing to a temporary file in the same directory and then renaming makes the switch
+    atomic: readers see either the old file or the new one, never a half-written one. The
+    previous version is kept alongside as ``.bak`` so there is still a way back even if
+    the *new* data turns out to be wrong.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    os.close(handle)
+    temporary = Path(temporary_name)
+
+    try:
+        write(temporary)
+        # Force the bytes to disk before the rename, so a power loss cannot leave the
+        # rename visible while the contents are not.
+        with open(temporary, "rb") as file:
+            os.fsync(file.fileno())
+
+        if keep_backup and path.exists():
+            backup = path.with_suffix(path.suffix + ".bak")
+            backup.unlink(missing_ok=True)
+            os.replace(path, backup)
+
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def file_hash(path: Path) -> str:
@@ -126,6 +176,7 @@ class Warehouse:
         # detaille's columns, or the contract raises a spurious refusal.
         self.profile_name = profile_name or config.settings.warehouse.profile
         self.manifest = Manifest.load(self.root / MANIFEST_NAME)
+        self.skipped_xlsx: list[str] = []
 
     # -- paths -------------------------------------------------------------------
 
@@ -139,9 +190,31 @@ class Warehouse:
     # -- reading -----------------------------------------------------------------
 
     def read_fact(self) -> pd.DataFrame:
+        """Read the fact table, falling back to the backup if the current file is broken."""
         if not self.fact_path.exists():
             return pd.DataFrame()
-        return pd.read_parquet(self.fact_path)
+        try:
+            return pd.read_parquet(self.fact_path)
+        except Exception as exc:                  # noqa: BLE001 - re-raised with context
+            backup = self.fact_path.with_suffix(self.fact_path.suffix + ".bak")
+            if backup.exists():
+                try:
+                    frame = pd.read_parquet(backup)
+                except Exception:
+                    raise WarehouseCorrupt(
+                        f"{self.fact_path} is unreadable ({exc}) and so is its backup. "
+                        "Re-ingest the source files to rebuild the warehouse."
+                    ) from exc
+                raise WarehouseCorrupt(
+                    f"{self.fact_path} is unreadable ({exc}), probably from an "
+                    f"interrupted write. A backup holding {len(frame)} rows is available "
+                    f"at {backup}: rename it over the main file to recover, then "
+                    "re-ingest anything committed since."
+                ) from exc
+            raise WarehouseCorrupt(
+                f"{self.fact_path} is unreadable ({exc}) and there is no backup. "
+                "Re-ingest the source files to rebuild the warehouse."
+            ) from exc
 
     def pending(self, paths: list[Path]) -> dict[str, list[Path]]:
         """Split candidate files into new, changed and unchanged."""
@@ -231,7 +304,19 @@ class Warehouse:
             return summary
 
         self.root.mkdir(parents=True, exist_ok=True)
-        combined.to_parquet(self.fact_path, index=False)
+        atomic_write(
+            self.fact_path, lambda target: combined.to_parquet(target, index=False)
+        )
+
+        # Read back before recording the files as ingested. If the write silently
+        # produced something unusable, the manifest must not claim otherwise -- a
+        # re-run would then skip the very files that are missing.
+        verified = pd.read_parquet(self.fact_path)
+        if len(verified) != len(combined):
+            raise WarehouseCorrupt(
+                f"wrote {len(combined)} rows but read back {len(verified)}. "
+                "The warehouse has not been updated; the previous version is intact."
+            )
 
         for path, frame in zip(sources, frames):
             self.manifest.files[str(path)] = IngestedFile.from_frame(
@@ -242,12 +327,15 @@ class Warehouse:
         self.manifest.save(self.root / MANIFEST_NAME)
 
         self._write_dimensions(combined)
-        self._write_bank_extracts(combined)
+        touched = set(incoming["banque"].dropna().unique()) if "banque" in incoming else None
+        self._write_bank_extracts(combined, touched)
+        if self.skipped_xlsx:
+            summary["skipped_xlsx"] = list(self.skipped_xlsx)
         return summary
 
     # -- dimensions and extracts --------------------------------------------------
 
-    def _write_bank_extracts(self, fact: pd.DataFrame) -> None:
+    def _write_bank_extracts(self, fact: pd.DataFrame, banks: set[str] | None = None) -> None:
         """One file per bank, as requested, alongside the combined table.
 
         Point Power BI at the combined table and filter on `banque`: a single model
@@ -259,20 +347,34 @@ class Warehouse:
         directory.mkdir(parents=True, exist_ok=True)
         limit = self.config.settings.warehouse.xlsx_row_limit
 
+        self.skipped_xlsx = []
         for bank, group in fact.groupby("banque"):
+            # Each extract holds that bank's whole history, so rewriting all of them on
+            # every commit means re-serialising years of data to add one month. A
+            # monthly run touches one bank; only that bank's extract needs rebuilding.
+            if banks is not None and bank not in banks:
+                continue
             group = group.reset_index(drop=True)
             group.to_parquet(self.bank_path(bank), index=False)
-            if self.config.settings.warehouse.write_xlsx:
-                if len(group) > limit:
-                    # Truncating silently would be far worse than refusing.
-                    continue
-                labels = self.config.schema_.label_map(self.profile_name)
-                group.rename(columns=labels).to_excel(
-                    self.bank_path(bank, "xlsx"), index=False, sheet_name="Ventes"
+            if not self.config.settings.warehouse.write_xlsx:
+                continue
+            if len(group) > limit:
+                # Truncating silently would be far worse than not writing at all, but
+                # saying nothing would leave a stale extract looking current.
+                self.skipped_xlsx.append(
+                    f"{bank}: {len(group)} rows exceeds the Excel limit of {limit}; "
+                    "the .parquet extract holds the full data"
                 )
+                self.bank_path(bank, "xlsx").unlink(missing_ok=True)
+                continue
+            labels = self.config.schema_.label_map(self.profile_name)
+            group.rename(columns=labels).to_excel(
+                self.bank_path(bank, "xlsx"), index=False, sheet_name="Ventes"
+            )
 
     def _write_dimensions(self, fact: pd.DataFrame) -> None:
         """Write the dimension tables Power BI needs to model the data properly."""
+        self.root.mkdir(parents=True, exist_ok=True)
         build_date_dimension(fact).to_parquet(self.root / "dim_date.parquet", index=False)
 
         if "banque" in fact.columns:

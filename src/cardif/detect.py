@@ -78,6 +78,45 @@ class SheetTable:
         return list(range(self.data_start, self.data_start + len(self.rows)))
 
 
+def uncached_formula_columns(path, sheet_name: str, header_row: int) -> list[str]:
+    """Find columns whose values are formulas that were never calculated and cached.
+
+    Excel stores both a formula and its last computed result. openpyxl's ``data_only``
+    mode reads the cached result -- but a workbook produced by a script, by LibreOffice,
+    or saved without recalculation has no cache, and every such cell reads as ``None``.
+
+    The consequence is severe and silent: a "Prime totale" column computed as
+    ``=B2+C2`` arrives completely empty, gets dropped as an empty column, and the file
+    consolidates with the premium missing. This finds those columns so the situation can
+    be reported instead of discovered later on a dashboard.
+
+    Returns the header text of each affected column.
+    """
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(path, data_only=False)
+    try:
+        if sheet_name not in workbook.sheetnames:
+            return []
+        worksheet = workbook[sheet_name]
+        headers: dict[int, str] = {}
+        affected: list[str] = []
+
+        for row in worksheet.iter_rows(min_row=1, max_row=min(worksheet.max_row, 5000)):
+            for cell in row:
+                if cell.row == header_row and cell.value is not None:
+                    headers[cell.column] = str(cell.value).strip()
+                if cell.row <= header_row:
+                    continue
+                if isinstance(cell.value, str) and cell.value.startswith("="):
+                    label = headers.get(cell.column) or get_column_letter(cell.column)
+                    if label not in affected:
+                        affected.append(label)
+        return affected
+    finally:
+        workbook.close()
+
+
 def read_grid(ws) -> list[list]:
     """Read a worksheet into a plain 0-indexed grid, resolving merged cells.
 

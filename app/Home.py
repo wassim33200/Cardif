@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from cardif.config import load_config          # noqa: E402
 from cardif.llm import LocalModel, OfflineViolation   # noqa: E402
-from cardif.store import Warehouse             # noqa: E402
+from cardif.store import Warehouse, WarehouseCorrupt   # noqa: E402
 
 st.set_page_config(page_title="Cardif — Consolidation", page_icon="📊", layout="wide")
 
@@ -114,7 +114,11 @@ def main() -> None:
     )
 
     warehouse = Warehouse(config, context["warehouse_dir"], context["profile"])
-    fact = warehouse.read_fact()
+    try:
+        fact = warehouse.read_fact()
+    except WarehouseCorrupt as exc:
+        st.error(str(exc))
+        st.stop()
 
     left, middle, right = st.columns(3)
     left.metric("Lignes dans l'entrepôt", f"{len(fact):,}".replace(",", " "))

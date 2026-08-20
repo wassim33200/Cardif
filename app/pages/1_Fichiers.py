@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from cardif.config import load_config          # noqa: E402
 from cardif.filemeta import scan               # noqa: E402
 from cardif.llm import LocalModel              # noqa: E402
-from cardif.store import Warehouse             # noqa: E402
+from cardif.store import Warehouse, WarehouseCorrupt   # noqa: E402
 
 st.set_page_config(page_title="Fichiers", page_icon="📁", layout="wide")
 st.title("1 · Fichiers détectés")
@@ -36,7 +36,11 @@ if not metas:
     st.stop()
 
 warehouse = Warehouse(config, state.get("warehouse_dir", "warehouse"), state.get("profile"))
-status = {str(m.path): warehouse.manifest.status(m.path) for m in metas}
+try:
+    status = {str(m.path): warehouse.manifest.status(m.path) for m in metas}
+except WarehouseCorrupt as exc:
+    st.error(str(exc))
+    st.stop()
 
 STATUS_LABEL = {"new": "nouveau", "changed": "modifié", "unchanged": "déjà intégré"}
 

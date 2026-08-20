@@ -21,7 +21,7 @@ from .config import load_config
 from .filemeta import scan
 from .pipeline import commit as commit_run
 from .pipeline import profile_headers, run
-from .store import SchemaContractError, Warehouse
+from .store import SchemaContractError, Warehouse, WarehouseCorrupt
 
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
@@ -172,6 +172,24 @@ def cmd_status(args) -> int:
     return 0
 
 
+def _run_command(args) -> int:
+    """Dispatch, turning the expected failures into messages rather than tracebacks."""
+    try:
+        return args.func(args)
+    except WarehouseCorrupt as exc:
+        print(f"\n{exc}")
+        return 4
+    except SchemaContractError as exc:
+        print(f"\n{exc}")
+        return 3
+    except FileNotFoundError as exc:
+        print(f"\n{exc}")
+        return 1
+    except KeyboardInterrupt:
+        print("\ninterrupted; nothing was written")
+        return 130
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cardif", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -207,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_status)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    return _run_command(args)
 
 
 if __name__ == "__main__":

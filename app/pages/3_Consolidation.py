@@ -19,7 +19,7 @@ from cardif.audit import write_audit           # noqa: E402
 from cardif.config import load_config          # noqa: E402
 from cardif.filemeta import scan               # noqa: E402
 from cardif.pipeline import commit, run        # noqa: E402
-from cardif.store import SchemaContractError, Warehouse   # noqa: E402
+from cardif.store import SchemaContractError, Warehouse, WarehouseCorrupt   # noqa: E402
 from cardif.validate import reconciliation_table          # noqa: E402
 
 st.set_page_config(page_title="Consolidation", page_icon="📦", layout="wide")
@@ -37,7 +37,11 @@ warehouse_dir = state.get("warehouse_dir", "warehouse")
 warehouse = Warehouse(config, warehouse_dir, profile_name)
 
 metas = scan(Path(root), config.banks)
-buckets = warehouse.pending([m.path for m in metas])
+try:
+    buckets = warehouse.pending([m.path for m in metas])
+except WarehouseCorrupt as exc:
+    st.error(str(exc))
+    st.stop()
 todo = buckets["new"] + buckets["changed"]
 
 a, b, c = st.columns(3)
@@ -158,7 +162,7 @@ allow = st.checkbox("Écrire malgré les erreurs", value=False, disabled=not err
 if st.button("Confirmer et écrire", type="primary", disabled=bool(errors) and not allow):
     try:
         summary = commit(outcome, config, warehouse_dir)
-    except SchemaContractError as exc:
+    except (SchemaContractError, WarehouseCorrupt) as exc:
         st.error(str(exc))
         st.stop()
 

@@ -26,7 +26,7 @@ from openpyxl import load_workbook
 
 from .coerce import ColumnReport, coerce_column
 from .config import Config
-from .detect import SheetTable, extract_table
+from .detect import SheetTable, extract_table, uncached_formula_columns
 from .filemeta import FileMeta
 from .mapping import Mapper, MappingResult
 
@@ -311,6 +311,28 @@ def process_file(
         if not table.rows:
             result.error = "; ".join(table.notes) or "no data rows found"
             return result
+
+        # A column of uncalculated formulas reads as entirely empty and would otherwise
+        # be dropped in silence, taking a premium column with it. Only worth checking
+        # when something actually went missing.
+        dropped_empty = [
+            c.header or c.letter for c in table.dropped_columns
+            if "empty" in c.reason
+        ]
+        if dropped_empty:
+            formula_columns = uncached_formula_columns(
+                meta.path, sheet_name, table.header_row
+            )
+            lost = [c for c in dropped_empty if c in formula_columns]
+            if lost:
+                result.error = (
+                    "these columns contain formulas whose results were never saved: "
+                    + ", ".join(lost)
+                    + ". Open the file in Excel and save it so the values are stored, "
+                    "then process it again. Consolidating it as-is would lose these "
+                    "columns entirely."
+                )
+                return result
 
         mappings = mapper.resolve_table(
             table.headers, table.rows, meta.bank_code, table.header_parts

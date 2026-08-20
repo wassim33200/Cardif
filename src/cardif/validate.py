@@ -136,23 +136,30 @@ def check_premium_reconciliation(frame: pd.DataFrame, config: Config) -> list[Fl
     subset = frame.dropna(subset=list(needed))
     if "prime_totale_source" in frame.columns:
         subset = subset[subset["prime_totale_source"] == "reported"]
+    if subset.empty:
+        return []
+
+    # Test every row at once, then walk only the failures. Iterating the whole table to
+    # build no flags at all is the common case and must not cost anything.
+    expected_all = subset["prime_nette"] + subset["frais"]
+    difference_all = (expected_all - subset["prime_totale"]).abs()
+    offending = subset[difference_all > tolerance]
 
     flags = []
-    for _, row in subset.iterrows():
+    for _, row in offending.iterrows():
         expected = row["prime_nette"] + row["frais"]
         difference = abs(expected - row["prime_totale"])
-        if difference > tolerance:
-            flags.append(Flag(
-                code="premium_mismatch",
-                severity="warning",
-                message=(
-                    f"prime_nette ({row['prime_nette']:.2f}) + frais ({row['frais']:.2f}) "
-                    f"= {expected:.2f}, but prime_totale is {row['prime_totale']:.2f} "
-                    f"(difference {difference:.2f})"
-                ),
-                field="prime_totale",
-                **_row_anchor(row),
-            ))
+        flags.append(Flag(
+            code="premium_mismatch",
+            severity="warning",
+            message=(
+                f"prime_nette ({row['prime_nette']:.2f}) + frais ({row['frais']:.2f}) "
+                f"= {expected:.2f}, but prime_totale is {row['prime_totale']:.2f} "
+                f"(difference {difference:.2f})"
+            ),
+            field="prime_totale",
+            **_row_anchor(row),
+        ))
     return flags
 
 
@@ -214,10 +221,13 @@ def check_declaration_lag(frame: pd.DataFrame, config: Config) -> list[Flag]:
         + (reception.dt.month - subset["date_effet"].dt.month)
     )
 
+    # Only rows outside the accepted window are worth looking at individually.
+    unusual = lag_months.notna() & ((lag_months > max_lag) | (lag_months < -1))
+    if not unusual.any():
+        return []
+
     flags = []
-    for (_, row), lag in zip(subset.iterrows(), lag_months):
-        if pd.isna(lag):
-            continue
+    for (_, row), lag in zip(subset[unusual].iterrows(), lag_months[unusual]):
         if lag > max_lag:
             flags.append(Flag(
                 code="late_declaration",
@@ -243,52 +253,112 @@ def check_declaration_lag(frame: pd.DataFrame, config: Config) -> list[Flag]:
     return flags
 
 
+def check_period_coverage(frame: pd.DataFrame) -> list[Flag]:
+    """Flag a bank-month covered by more than one file.
+
+    The realistic case: a bank resends a corrected March under a new name
+    ("Ventes_Mars_corrige.xlsx") instead of overwriting the original. Both files are
+    genuinely new to the manifest, both are ingested, and that month's premium total
+    silently doubles on every dashboard built from it.
+
+    This is stated once per bank-month at error level. The per-contract duplicate check
+    below also fires, but as dozens of individual informational lines it is noise, not a
+    warning -- and the consequence here is a wrong number, not an oddity.
+    """
+    if not {"banque", "mois_reception", "source_file"} <= set(frame.columns):
+        return []
+
+    flags = []
+    grouped = frame.groupby(["banque", "mois_reception"])["source_file"].unique()
+    for (bank, period), files in grouped.items():
+        if len(files) < 2:
+            continue
+        names = ", ".join(sorted(Path(f).name for f in files))
+        flags.append(Flag(
+            code="period_covered_twice",
+            severity="error",
+            message=(
+                f"{bank} {period} is covered by {len(files)} files ({names}). "
+                "If one is a resend of the other, this month's totals are double-counted. "
+                "Remove the superseded file, or overwrite the original so it is "
+                "recognised as a correction rather than a new file."
+            ),
+            field="mois_reception",
+            bank=str(bank),
+            period=str(period),
+        ))
+    return flags
+
+
 def check_duplicates(frame: pd.DataFrame) -> list[Flag]:
     """Find repeated business rows, within a file and across files.
 
     Within one file a repeat is almost certainly a copy-paste error. Across files it may
-    be legitimate — a renewal, an instalment, a correction resent — so it is reported at
-    a lower severity and left for the user to judge.
+    be legitimate -- a renewal, an instalment, a resent correction -- so it is reported
+    at a lower severity, aggregated per pair of files, and left for the user to judge.
+
+    Everything here is done with grouped aggregation rather than per-contract lookups:
+    a legitimate portfolio has thousands of renewals, and scanning the table once per
+    repeated contract turns this check into the slowest thing in the pipeline.
     """
-    key = [c for c in ("num_contrat", "date_effet", "prime_totale") if c in frame.columns]
-    if "num_contrat" not in key:
+    if "num_contrat" not in frame.columns:
         return []
 
-    flags = []
+    key = [c for c in ("num_contrat", "date_effet", "prime_totale") if c in frame.columns]
     subset = frame.dropna(subset=["num_contrat"])
+    if subset.empty:
+        return []
 
-    within = subset.groupby(["source_file", *key]).size()
-    for entry, count in within[within > 1].items():
-        source_file = entry[0]
-        contract = entry[1]
-        rows = subset[(subset["source_file"] == source_file) & (subset["num_contrat"] == contract)]
+    flags: list[Flag] = []
+
+    # --- the same row twice in one file ------------------------------------------
+    grouped = subset.groupby(["source_file", *key], dropna=False)
+    counts = grouped.size()
+    for entry in counts[counts > 1].index:
+        group = grouped.get_group(entry)
+        source_file, contract = entry[0], entry[1]
+        rows = ", ".join(str(int(r)) for r in sorted(group["source_row"]))
         flags.append(Flag(
             code="duplicate_in_file",
             severity="error",
             message=(
-                f"contract {contract} appears {count} times in the same file "
-                f"(rows {', '.join(str(int(r)) for r in rows['source_row'])})"
+                f"contract {contract} appears {len(group)} times in the same file "
+                f"(rows {rows})"
             ),
             field="num_contrat",
             source_file=str(source_file),
-            bank=str(rows["banque"].iloc[0]) if "banque" in rows else "",
-            period=str(rows["mois_reception"].iloc[0]) if "mois_reception" in rows else "",
+            bank=str(group["banque"].iloc[0]) if "banque" in group else "",
+            period=str(group["mois_reception"].iloc[0]) if "mois_reception" in group else "",
         ))
 
-    across = subset.groupby("num_contrat")["source_file"].nunique()
-    for contract, n_files in across[across > 1].items():
-        rows = subset[subset["num_contrat"] == contract]
-        files = sorted(set(rows["source_file"]))
+    # --- the same contract in more than one file ----------------------------------
+    files_per_contract = (
+        subset.groupby("num_contrat")["source_file"]
+        .agg(lambda values: tuple(sorted(set(values))))
+    )
+    repeated = files_per_contract[files_per_contract.map(len) > 1]
+    if repeated.empty:
+        return flags
+
+    banks = subset.drop_duplicates("num_contrat").set_index("num_contrat")
+    bank_column = "banque" if "banque" in subset.columns else None
+
+    # One flag per set of files, not one per contract: a hundred identical lines is
+    # noise, and noise gets ignored.
+    for files, contracts in repeated.groupby(repeated.values).groups.items():
+        names = sorted(contracts)
+        shown = ", ".join(names[:5]) + ("…" if len(names) > 5 else "")
+        bank = str(banks.loc[names[0], bank_column]) if bank_column else ""
         flags.append(Flag(
             code="duplicate_across_files",
             severity="info",
             message=(
-                f"contract {contract} appears in {n_files} files "
-                f"({', '.join(Path(f).name for f in files)}); "
-                "this may be a renewal or a resent correction"
+                f"{len(names)} contract(s) appear in both "
+                f"{' and '.join(Path(f).name for f in files)} ({shown}); "
+                "this may be a renewal, an instalment or a resent correction"
             ),
             field="num_contrat",
-            bank=str(rows["banque"].iloc[0]) if "banque" in rows else "",
+            bank=bank,
         ))
 
     return flags
@@ -304,6 +374,7 @@ def validate(frame: pd.DataFrame, config: Config, profile_name: str | None = Non
     report.extend(check_required(frame, config, profile_name))
     report.extend(check_premium_reconciliation(frame, config))
     report.extend(check_period_agreement(frame, config))
+    report.extend(check_period_coverage(frame))
     report.extend(check_declaration_lag(frame, config))
     report.extend(check_duplicates(frame))
     return report
