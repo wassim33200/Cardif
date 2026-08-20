@@ -56,6 +56,11 @@ class SheetTable:
     data_start: int
     data_end: int
     headers: list[str] = field(default_factory=list)
+    # The pieces each header was composed from, top row first. For a two-row header
+    # ["Prime", "frais"]; for a single-row header a one-element list. The last element
+    # is the *leaf* label, which is what actually names the column -- the group label
+    # above it is shared with its siblings and cannot identify anything on its own.
+    header_parts: list[list[str]] = field(default_factory=list)
     columns: list[int] = field(default_factory=list)   # 1-based Excel column indices
     rows: list[list] = field(default_factory=list)
     dropped_rows: list[DroppedRow] = field(default_factory=list)
@@ -239,16 +244,21 @@ def find_header_row(
     return best_row, end, best_score
 
 
-def build_headers(grid: list[list], start: int, end: int) -> list[str]:
-    """Compose the header text for each column, joining a two-row header.
+def build_headers(grid: list[list], start: int, end: int) -> list[list[str]]:
+    """Compose each column's header, returning the parts it was built from.
 
-    ``Prime`` (merged) over ``nette`` becomes ``"Prime nette"``. A repeated group label
-    with nothing beneath it stays as-is rather than becoming ``"Prime Prime"``.
+    ``Prime`` (merged) over ``nette`` yields ``["Prime", "nette"]``. Callers join the
+    parts for display but keep the last one — the *leaf* — for matching: a merged group
+    label is shared by every column beneath it, so "Prime" identifies nothing, while
+    "frais" identifies the column exactly.
+
+    A repeated group label with nothing beneath it collapses to a single part rather
+    than becoming ``["Prime", "Prime"]``.
     """
     width = max(len(grid[r]) for r in range(start, end + 1))
-    headers = []
+    out = []
     for c in range(width):
-        parts = []
+        parts: list[str] = []
         for r in range(start, end + 1):
             value = grid[r][c] if c < len(grid[r]) else None
             if is_blank(value):
@@ -258,8 +268,8 @@ def build_headers(grid: list[list], start: int, end: int) -> list[str]:
             if parts and normalize_header(parts[-1]) == normalize_header(text):
                 continue
             parts.append(text)
-        headers.append(" ".join(parts))
-    return headers
+        out.append(parts)
+    return out
 
 
 def _is_terminator(row: list, settings: DetectionSettings) -> bool:
@@ -400,7 +410,8 @@ def extract_table(ws, vocabulary: set[str], settings: DetectionSettings) -> Shee
                           data_start=0, data_end=0,
                           notes=["no plausible header row found"])
 
-    headers = build_headers(grid, h_start, h_end)
+    header_parts = build_headers(grid, h_start, h_end)
+    headers = [" ".join(p) for p in header_parts]
     data_start = h_end + 1
     data_end, dropped_rows = find_table_extent(grid, data_start, settings)
 
@@ -428,6 +439,7 @@ def extract_table(ws, vocabulary: set[str], settings: DetectionSettings) -> Shee
     kept_cols, dropped_cols = select_columns(grid, headers, data_start, data_end, settings)
     table.columns = [c + 1 for c in kept_cols]
     table.headers = [headers[c] for c in kept_cols]
+    table.header_parts = [header_parts[c] for c in kept_cols]
     table.dropped_columns = dropped_cols
 
     for r in range(data_start, data_end + 1):
