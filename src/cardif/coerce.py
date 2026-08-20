@@ -29,20 +29,40 @@ _EXCEL_EPOCH = dt.date(1899, 12, 30)
 _CURRENCY = re.compile(r"[€$£]|\b(dt|tnd|eur|usd|dh|mad|dzd)\b", re.IGNORECASE)
 _NON_NUMERIC = re.compile(r"[^\d.,\-+]")
 
-_FRENCH_MONTHS = {
-    "janvier": 1, "janv": 1, "jan": 1,
-    "fevrier": 2, "fevr": 2, "fev": 2,
-    "mars": 3, "mar": 3,
-    "avril": 4, "avr": 4,
-    "mai": 5,
-    "juin": 6, "jun": 6,
-    "juillet": 7, "juil": 7, "jul": 7,
-    "aout": 8, "aou": 8,
-    "septembre": 9, "sept": 9, "sep": 9,
-    "octobre": 10, "octo": 10, "oct": 10,
-    "novembre": 11, "nov": 11,
-    "decembre": 12, "dec": 12,
+_FRENCH_MONTH_NAMES = {
+    "janvier": 1, "fevrier": 2, "mars": 3, "avril": 4, "mai": 5, "juin": 6,
+    "juillet": 7, "aout": 8, "septembre": 9, "octobre": 10, "novembre": 11,
+    "decembre": 12,
 }
+# Abbreviations that are ambiguous as a prefix, or that are not prefixes at all, and so
+# cannot be resolved by the general rule below.
+_FRENCH_MONTH_ALIASES = {"jan": 1, "fev": 2, "jun": 6, "jul": 7, "sept": 9}
+
+
+def french_month(token: str) -> int | None:
+    """Resolve a French month name or any unambiguous abbreviation of one.
+
+    Banks truncate month names to whatever their template or locale produced: "nov",
+    "nove", "novembre" all appear, as do "avri", "dece" and "sept". Matching on a
+    prefix rather than an enumerated list handles every truncation length at once.
+
+    An abbreviation matching more than one month resolves to nothing rather than to a
+    guess -- "jui" is both juin and juillet, and picking one silently would put sales in
+    the wrong month.
+    """
+    token = token.strip().lower()
+    if not token:
+        return None
+    if token in _FRENCH_MONTH_NAMES:
+        return _FRENCH_MONTH_NAMES[token]
+    if token in _FRENCH_MONTH_ALIASES:
+        return _FRENCH_MONTH_ALIASES[token]
+    if len(token) < 3:
+        return None
+    matches = {
+        month for name, month in _FRENCH_MONTH_NAMES.items() if name.startswith(token)
+    }
+    return matches.pop() if len(matches) == 1 else None
 _TEXT_DATE = re.compile(r"^(\d{1,2})[\-/ .]([a-z]+)[\-/ .](\d{2,4})$")
 _NUMERIC_DATE = re.compile(r"^(\d{1,4})[/\-.](\d{1,2})[/\-.](\d{2,4})$")
 
@@ -204,7 +224,7 @@ def to_date(value: object) -> dt.date | None:
     m = _TEXT_DATE.match(text)
     if m:
         day, month_name, year = int(m.group(1)), m.group(2), int(m.group(3))
-        month = _FRENCH_MONTHS.get(month_name)
+        month = french_month(month_name)
         if month is None:
             return None
         if year < 100:
