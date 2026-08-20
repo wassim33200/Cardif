@@ -52,7 +52,21 @@ class RunResult:
                 counter[mapping.header] += 1
         return counter
 
-    def summary_line(self) -> str:
+    def summary_line(self, lang: str = "fr") -> str:
+        """A one-line summary. French by default, to match the interface."""
+        if lang == "fr":
+            parts = [
+                f"{len(self.ok_results)}/{len(self.results)} fichiers",
+                f"{self.n_rows} lignes",
+            ]
+            if self.validation.errors:
+                parts.append(f"{self.validation.errors} erreurs")
+            if self.validation.warnings:
+                parts.append(f"{self.validation.warnings} avertissements")
+            if self.model_calls:
+                parts.append(f"{self.model_calls} appels au modèle")
+            return ", ".join(parts)
+
         parts = [
             f"{len(self.ok_results)}/{len(self.results)} files",
             f"{self.n_rows} rows",

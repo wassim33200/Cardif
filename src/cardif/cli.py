@@ -78,7 +78,7 @@ def cmd_profile(args) -> int:
 def cmd_run(args) -> int:
     config = load_config(args.config)
     outcome = run(args.root, config, args.profile, use_model=not args.no_model)
-    print(outcome.summary_line())
+    print(outcome.summary_line('en'))
 
     for path, reason in outcome.skipped:
         print(f"  skipped {path.name}: {reason}")
@@ -120,7 +120,7 @@ def cmd_commit(args) -> int:
         todo = [m.path for m in metas]
 
     outcome = run(args.root, config, args.profile, use_model=not args.no_model, only=todo)
-    print(outcome.summary_line())
+    print(outcome.summary_line('en'))
 
     if outcome.validation.errors and not args.allow_errors:
         print(

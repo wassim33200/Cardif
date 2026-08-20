@@ -1,0 +1,19 @@
+# Streamlit's defaults are wrong for this project, which handles insurance data.
+#
+# Two in particular: it reports usage statistics to a remote endpoint, and it binds to
+# every interface, which puts the app on the office network. Both are disabled here, so
+# the offline guarantee holds for the UI as well as for the pipeline.
+
+[browser]
+# No telemetry. Nothing about this tool's use leaves the machine.
+gatherUsageStats = false
+
+[server]
+# Loopback only: the app must not be reachable from the rest of the network.
+address = "127.0.0.1"
+headless = true
+enableCORS = true
+enableXsrfProtection = true
+
+[theme]
+base = "light"
