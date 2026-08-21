@@ -1,0 +1,155 @@
+# Catalogue des produits
+# ======================
+#
+# Chaque banque vend plusieurs produits, et chaque produit a ses propres colonnes :
+# une ADE porte un crédit et un CRD, une prévoyance porte un capital et une
+# périodicité, une assurance voyage porte une zone. Les forcer dans un seul tableau
+# donnerait une majorité de cases vides.
+#
+# Ici, chaque produit choisit ses champs dans le catalogue de `schema.yaml`, et donne
+# les mots qui permettent de le reconnaître dans le nom d'un fichier ou d'un dossier.
+#
+# Ajouter un produit = ajouter un bloc ici. Aucun code à modifier.
+#
+#   label        nom affiché
+#   famille      regroupement (ade, prevoyance, sante, voyage, epargne)
+#   partenaires  banques qui le distribuent (informatif : sert à lever les ambiguïtés)
+#   match        mots reconnus dans le nom du fichier ou du dossier
+#   colonnes     les champs attendus, dans l'ordre voulu en sortie
+#   requis       les champs sans lesquels une ligne n'a pas de sens
+#   aliases      intitulés propres à ce produit, qui priment sur ceux du catalogue
+
+produits:
+
+  # =========================================================== ADE : adossée à un crédit
+  ade_immobilier:
+    label: "ADE Immobilier"
+    famille: ade
+    partenaires: [CNEP, BNPPED]
+    match: ["ade immobilier", "ade immo", "ade habitat", "assurance emprunteur immobilier",
+            "credit immobilier", "emprunteur immobilier", "adei"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, num_credit, nom_client,
+               date_naissance, agence, date_effet, date_fin, duree, montant_credit,
+               capital_restant_du, formule, taux_prime, prime_nette, frais, prime_totale,
+               commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+
+  ade_automobile:
+    label: "ADE Crédit automobile"
+    famille: ade
+    partenaires: [BNPPED]
+    match: ["ade automobile", "ade auto", "credit automobile", "credit auto",
+            "emprunteur auto", "adea"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, num_credit, nom_client,
+               date_naissance, agence, date_effet, date_fin, duree, montant_credit,
+               capital_restant_du, formule, taux_prime, prime_nette, frais, prime_totale,
+               commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+
+  ade_amenagement:
+    label: "ADE Crédit aménagement"
+    famille: ade
+    partenaires: [CNEP]
+    match: ["ade amenagement", "credit amenagement", "amenagement sans hypotheque",
+            "amenagement"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, num_credit, nom_client,
+               date_naissance, agence, date_effet, date_fin, duree, montant_credit,
+               capital_restant_du, formule, taux_prime, prime_nette, frais, prime_totale,
+               commission_partenaire, retention_assureur, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+
+  # ================================================== Prévoyance : capital, vendue seule
+  cnep_total_prevoyance:
+    label: "CNEP Total Prévoyance"
+    famille: prevoyance
+    partenaires: [CNEP]
+    match: ["cnep total prevoyance", "total prevoyance", "ctp", "prevoyance cnep"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, nom_client,
+               date_naissance, agence, date_effet, date_fin, formule, capital_assure,
+               periodicite, prime_adherent, prime_conjoint, prime_totale,
+               commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+    aliases:
+      "capital souscrit": capital_assure
+      "formule 1": formule
+      "formule 2": formule
+
+  protection_pro:
+    label: "Protection PRO"
+    famille: prevoyance
+    partenaires: [BNPPED]
+    match: ["protection pro", "protectionpro", "pro prevoyance"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, nom_client,
+               date_naissance, agence, date_effet, date_fin, capital_assure,
+               periodicite, prime_totale, commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+
+  protection_optimale:
+    label: "Protection Optimale"
+    famille: prevoyance
+    partenaires: [BNPPED]
+    match: ["protection optimale", "optimale"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, nom_client,
+               date_naissance, agence, date_effet, date_fin, formule, capital_assure,
+               periodicite, prime_totale, commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+
+  # ============================================================================= Santé
+  sahti:
+    label: "SAHTI"
+    famille: sante
+    partenaires: [CNEP]
+    match: ["sahti", "sahty", "sante cnep"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, nom_client,
+               date_naissance, agence, date_effet, date_fin, formule, nb_assures,
+               capital_assure, periodicite, prime_totale, commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+    aliases:
+      "formule individuelle": formule
+      "formule familiale": formule
+      "nombre de beneficiaires": nb_assures
+
+  # ============================================================================ Voyage
+  rihlati:
+    label: "Assurance voyage RIHLATI"
+    famille: voyage
+    partenaires: [CNEP]
+    match: ["rihlati", "rihlaty", "assurance voyage cnep", "voyage cnep"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, nom_client,
+               date_naissance, agence, date_effet, date_fin, duree, zone, formule,
+               capital_assure, prime_totale, commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+
+  voyage_visa:
+    label: "Assurance voyage Carte VISA"
+    famille: voyage
+    partenaires: [BNPPED]
+    match: ["voyage visa", "carte visa", "assurance voyage visa", "visa"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, nom_client,
+               date_naissance, agence, date_effet, date_fin, type_carte, zone,
+               capital_assure, prime_totale, commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+
+  # =========================================================================== Épargne
+  assurcompte:
+    label: "Assurcompte"
+    famille: epargne
+    partenaires: [BNPPED]
+    match: ["assurcompte", "assur compte", "assurance compte epargne"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, nom_client,
+               date_naissance, agence, date_effet, date_fin, package, capital_assure,
+               periodicite, prime_totale, commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+
+  # ==================================================================== filet de sécurité
+  # Utilisé quand le produit n'a pas pu être identifié : garde les champs communs à
+  # tous les produits, pour que le fichier soit tout de même exploitable.
+  generique:
+    label: "Produit non identifié"
+    famille: autre
+    partenaires: []
+    match: []
+    colonnes: [banque, produit_code, mois_reception, num_contrat, nom_client, agence,
+               date_effet, date_fin, produit, formule, capital_assure, prime_nette,
+               frais, prime_totale, statut]
+    requis: [num_contrat, date_effet, prime_totale]

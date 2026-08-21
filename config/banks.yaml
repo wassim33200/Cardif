@@ -1,39 +1,26 @@
-# Folder name -> bank identity.
+# Banques partenaires
+# ===================
 #
-# `match` is matched case-insensitively against the folder name with accents folded and
-# the year stripped, so "BNA 2025", "bna_2024" and "BNA" all resolve to the same bank.
-# Adding a new bank is a config edit, never a code change.
+# Le nom du dossier indique la banque. L'année est ignorée, donc « CNEP 2025 »,
+# « cnep_2024 » et « CNEP Banque » désignent la même banque.
+#
+# Ajouter une banque = ajouter un bloc ici. Aucun code à modifier.
 
 banks:
-  - code: BNA
-    label: "Banque Nationale Agricole"
-    match: ["bna"]
+  - code: CNEP
+    label: "CNEP Banque"
+    match: ["cnep", "cnep banque"]
 
-  - code: BIAT
-    label: "Banque Internationale Arabe de Tunisie"
-    match: ["biat"]
+  - code: BNPPED
+    label: "BNP Paribas El Djazaïr"
+    match: ["bnpped", "bnp paribas el djazair", "bnp el djazair", "bnp paribas",
+            "bnppb", "bnp"]
 
-  - code: STB
-    label: "Société Tunisienne de Banque"
-    match: ["stb"]
-
-  - code: BH
-    label: "Banque de l'Habitat"
-    match: ["bh", "banque habitat"]
-
-  - code: ATB
-    label: "Arab Tunisian Bank"
-    match: ["atb"]
-
-  - code: UIB
-    label: "Union Internationale de Banques"
-    match: ["uib"]
-
-# Per-bank overrides applied after the generic pipeline.
+# Réglages propres à une banque, appliqués après le traitement général.
 overrides: {}
-  # Example:
-  # BNA:
-  #   sheet_preference: ["Ventes", "Feuil1"]   # which sheet to prefer when several exist
-  #   header_search_rows: 40                   # look deeper for the header row
-  #   aliases:                                 # bank-specific header meanings
-  #     "montant": prime_totale
+  # Exemple :
+  # CNEP:
+  #   sheet_preference: ["Ventes", "Feuil1"]   # feuille à privilégier
+  #   header_search_rows: 40                   # chercher l'en-tête plus bas
+  #   aliases:                                 # intitulés propres à cette banque
+  #     "mtt": prime_totale

@@ -38,9 +38,8 @@ state = st.session_state
 root = exiger_un_dossier()
 
 config = load_config(state.get("config_dir", "config"))
-profile_name = state.get("profile", config.settings.warehouse.profile)
 warehouse_dir = state.get("warehouse_dir", "warehouse")
-warehouse = Warehouse(config, warehouse_dir, profile_name)
+warehouse = Warehouse(config, warehouse_dir)
 
 # Shown once after a save. The page reruns so the counters at the top are current
 # rather than still showing the files as new.
@@ -83,7 +82,7 @@ if not selection:
 if st.button(f"Voir le résultat ({len(selection)} fichier·s)", type="primary"):
     with st.spinner("Traitement…"):
         state["run"] = run(
-            root, config, profile_name,
+            root, config,
             use_model=state.get("use_model", True),
             only=selection,
             overrides=state.get("overrides", {}),
@@ -96,6 +95,27 @@ if outcome is None:
 
 st.subheader("Résultat")
 st.caption(outcome.summary_line())
+
+compte_produits = outcome.produits_rencontres()
+if compte_produits:
+    st.caption(
+        "Produits reconnus : "
+        + " · ".join(
+            f"{config.produit(code).label} ({nombre})"
+            for code, nombre in sorted(compte_produits.items())
+        )
+    )
+
+non_identifies = outcome.produits_non_identifies()
+if non_identifies:
+    st.warning(
+        f"**{len(non_identifies)} fichier·s dont le produit n'a pas été reconnu.** "
+        "Ils sont traités avec un format de repli qui ne garde que les colonnes "
+        "communes : les colonnes propres au produit seraient perdues. Renommez-les "
+        "en y mettant le nom du produit, ou indiquez-le à l'étape **Fichiers**."
+    )
+    for resultat in non_identifies[:5]:
+        st.caption(f"· {Path(resultat.meta.path).name}")
 
 if outcome.skipped:
     st.error(
@@ -125,18 +145,31 @@ preview, flags_tab, reconciliation, dropped = st.tabs(
 )
 
 with preview:
-    st.caption(
-        f"{len(outcome.frame)} ventes au total — les 200 premières sont affichées."
-    )
-    technique = st.checkbox(
-        "Afficher aussi la provenance de chaque ligne",
-        help="Le fichier et la ligne d'où vient chaque vente. Toujours enregistré "
-             "dans la base, même quand ce n'est pas affiché ici.",
-    )
-    st.dataframe(
-        pour_affichage(outcome.frame.head(200), config, profile_name, technique),
-        use_container_width=True, hide_index=True,
-    )
+    # Each product has its own columns, so they are shown one at a time: stacking them
+    # would give a table that is mostly empty and impossible to read.
+    compte = outcome.produits_rencontres()
+    codes = sorted(compte)
+    if not codes:
+        st.info("Aucune vente à afficher.")
+    else:
+        choix = st.selectbox(
+            "Produit à afficher", codes,
+            format_func=lambda c: f"{config.produit(c).label} — {compte[c]} fichier·s",
+        )
+        morceaux = [r.frame for r in outcome.ok_results if r.produit == choix]
+        extrait = pd.concat(morceaux, ignore_index=True) if morceaux else pd.DataFrame()
+        st.caption(
+            f"{len(extrait)} ventes pour ce produit — les 200 premières sont affichées."
+        )
+        technique = st.checkbox(
+            "Afficher aussi la provenance de chaque ligne",
+            help="Le fichier et la ligne d'où vient chaque vente. Toujours enregistré "
+                 "dans la base, même quand ce n'est pas affiché ici.",
+        )
+        st.dataframe(
+            pour_affichage(extrait.head(200), config, choix, technique),
+            use_container_width=True, hide_index=True,
+        )
 
 with flags_tab:
     report = outcome.validation

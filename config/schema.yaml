@@ -1,213 +1,267 @@
-# Canonical field catalogue.
+# Catalogue des champs
+# ====================
 #
-# Each field declares the aliases seen in the wild, an expected content profile used to
-# verify a mapping against the actual data, and optionally a derivation rule used when a
-# bank does not report the field directly.
+# La liste de TOUS les champs que l'on sait reconnaître, toutes banques et tous produits
+# confondus. Un champ décrit ici n'est pas forcément présent partout : c'est
+# `produits.yaml` qui dit, pour chaque produit, lesquels de ces champs sont attendus.
 #
-# `profiles` at the bottom select which fields land in an export. This is where
-# "I only want the global premium" is expressed.
+# Séparer les deux est ce qui rend l'outil général : ajouter un produit ne demande pas
+# de toucher au code, et deux produits peuvent utiliser le même champ sans le redéfinir.
+#
+# Pour chaque champ :
+#   label      le nom affiché, en français
+#   type       identifier | text | category | date | money | integer | percent
+#   aliases    les intitulés rencontrés dans les fichiers des banques
+#   expect     à quoi doivent ressembler les VALEURS, pour vérifier une correspondance
+#   derive     comment le calculer quand la banque ne le fournit pas
 
 fields:
 
+  # ---------------------------------------------------------------- identification
   num_contrat:
     label: "N° contrat"
     type: identifier
-    description: "Numéro unique du contrat d'assurance chez la banque."
-    aliases:
-      - "n contrat"
-      - "num contrat"
-      - "numero contrat"
-      - "numero de contrat"
-      - "reference contrat"
-      - "ref contrat"
-      - "police"
-      - "n police"
-      - "numero police"
-      - "contrat"
-    expect:
-      mostly: identifier
-      min_unique_ratio: 0.8
+    description: "Numéro unique du contrat ou de l'adhésion."
+    aliases: ["n contrat", "num contrat", "numero contrat", "numero de contrat",
+              "reference contrat", "ref contrat", "police", "n police",
+              "numero police", "contrat", "n adhesion", "numero adhesion",
+              "reference adhesion", "id contrat"]
+    expect: { mostly: identifier, min_unique_ratio: 0.8 }
+
+  num_credit:
+    label: "N° crédit"
+    type: identifier
+    description: "Référence du crédit auquel l'assurance est adossée (produits ADE)."
+    aliases: ["n credit", "num credit", "numero credit", "numero de credit",
+              "reference credit", "ref credit", "dossier credit", "n dossier"]
+    expect: { mostly: identifier }
 
   nom_client:
     label: "Nom client"
     type: text
-    description: "Nom et prénom de l'assuré ou du souscripteur."
-    aliases:
-      - "nom client"
-      - "nom du client"
-      - "client"
-      - "assure"
-      - "nom assure"
-      - "nom et prenom"
-      - "nom prenom"
-      - "souscripteur"
-      - "adherent"
-    expect:
-      mostly: text
+    description: "Nom et prénom de l'assuré, de l'adhérent ou de l'emprunteur."
+    aliases: ["nom client", "nom du client", "client", "assure", "nom assure",
+              "nom et prenom", "nom prenom", "souscripteur", "adherent",
+              "emprunteur", "nom emprunteur", "nom adherent", "titulaire"]
+    expect: { mostly: text }
 
-  date_effet:
-    label: "Date d'effet"
+  date_naissance:
+    label: "Date de naissance"
     type: date
-    description: "Date de prise d'effet du contrat. Distincte du mois de réception du fichier."
-    aliases:
-      - "date effet"
-      - "date d effet"
-      - "date de effet"
-      - "effet"
-      - "date debut"
-      - "date de debut"
-      - "date souscription"
-      - "date de souscription"
-      - "date adhesion"
-    expect:
-      mostly: date
-
-  date_fin:
-    label: "Date de fin"
-    type: date
-    description: "Date d'échéance ou de fin de couverture."
-    aliases:
-      - "date fin"
-      - "date de fin"
-      - "echeance"
-      - "date echeance"
-      - "fin de garantie"
-    expect:
-      mostly: date
-
-  produit:
-    label: "Produit"
-    type: category
-    description: "Nom du produit ou de la garantie vendue."
-    aliases:
-      - "produit"
-      - "type produit"
-      - "type de produit"
-      - "garantie"
-      - "type garantie"
-      - "formule"
-      - "gamme"
-      - "libelle produit"
-    expect:
-      mostly: text
-      max_unique_ratio: 0.3
+    description: "Date de naissance de l'assuré, qui détermine l'éligibilité en âge."
+    aliases: ["date naissance", "date de naissance", "ne le", "naissance", "dob"]
+    expect: { mostly: date }
 
   agence:
     label: "Agence"
     type: category
     description: "Agence bancaire ayant réalisé la vente."
-    aliases:
-      - "agence"
-      - "code agence"
-      - "nom agence"
-      - "libelle agence"
-      - "point de vente"
-      - "succursale"
-    expect:
-      mostly: text
-      max_unique_ratio: 0.5
+    aliases: ["agence", "code agence", "nom agence", "libelle agence",
+              "point de vente", "succursale", "agence commerciale"]
+    expect: { mostly: text, max_unique_ratio: 0.5 }
 
+  # ---------------------------------------------------------------------- périodes
+  date_effet:
+    label: "Date d'effet"
+    type: date
+    description: "Date de prise d'effet de la garantie."
+    aliases: ["date effet", "date d effet", "date de effet", "effet", "date debut",
+              "date de debut", "date souscription", "date de souscription",
+              "date adhesion", "date d adhesion", "date mobilisation"]
+    expect: { mostly: date }
+
+  date_fin:
+    label: "Date de fin"
+    type: date
+    description: "Date d'échéance ou de fin de couverture."
+    aliases: ["date fin", "date de fin", "echeance", "date echeance",
+              "fin de garantie", "date expiration"]
+    expect: { mostly: date }
+
+  duree:
+    label: "Durée (mois)"
+    type: integer
+    description: "Durée de la couverture, en mois."
+    aliases: ["duree", "duree contrat", "duree en mois", "duree mois", "nb mois",
+              "periode", "duree couverture", "duree garantie"]
+    expect: { mostly: numeric, min_value: 0, max_value: 600 }
+
+  periodicite:
+    label: "Périodicité"
+    type: category
+    description: "Rythme de paiement de la prime : mensuel, semestriel ou annuel."
+    aliases: ["periodicite", "periodicite prime", "frequence", "mode de paiement",
+              "modalite de reglement", "fractionnement", "rythme"]
+    expect: { mostly: text, max_unique_ratio: 0.2 }
+
+  # ------------------------------------------------------------------------ primes
   prime_nette:
     label: "Prime nette"
     type: money
-    description: "Prime hors frais et hors taxes. Base de calcul de la prime totale."
-    aliases:
-      - "prime nette"
-      - "prime de base"
-      - "prime base"
-      - "prime hors frais"
-      - "prime ht"
-      - "montant prime nette"
-    expect:
-      mostly: numeric
-      min_value: 0
+    description: "Prime hors frais et hors taxes."
+    aliases: ["prime nette", "prime de base", "prime base", "prime hors frais",
+              "prime ht", "montant prime nette", "prime pure"]
+    expect: { mostly: numeric, min_value: 0 }
 
   frais:
     label: "Frais"
     type: money
     description: "Frais de dossier, chargements ou accessoires ajoutés à la prime nette."
-    aliases:
-      - "frais"
-      - "frais de dossier"
-      - "frais dossier"
-      - "chargement"
-      - "chargements"
-      - "accessoire"
-      - "accessoires"
-      - "cout police"
-    expect:
-      mostly: numeric
-      min_value: 0
+    aliases: ["frais", "frais de dossier", "frais dossier", "chargement",
+              "chargements", "accessoire", "accessoires", "cout police",
+              "frais de gestion"]
+    expect: { mostly: numeric, min_value: 0 }
+
+  taxe:
+    label: "Taxe"
+    type: money
+    description: "Taxe d'assurance appliquée à la prime."
+    aliases: ["taxe", "taxes", "tva", "timbre", "droit de timbre", "taxe assurance"]
+    expect: { mostly: numeric, min_value: 0 }
 
   prime_totale:
     label: "Prime totale"
     type: money
-    description: "Prime globale effectivement payée par le client, frais inclus."
-    aliases:
-      - "prime totale"
-      - "prime globale"
-      - "prime ttc"
-      - "total prime"
-      - "montant prime"
-      - "montant total"
-      - "prime"
-      - "montant global"
-      - "mtt global"
-    expect:
-      mostly: numeric
-      min_value: 0
+    description: "Prime globale effectivement payée par le client, frais et taxes inclus."
+    aliases: ["prime totale", "prime globale", "prime ttc", "total prime",
+              "montant prime", "prime", "montant global", "mtt global",
+              "prime commerciale", "prime encaissee", "montant encaisse",
+              "prime unique", "prime payee"]
+    expect: { mostly: numeric, min_value: 0 }
     derive:
       - rule: sum
         from: [prime_nette, frais]
 
+  prime_adherent:
+    label: "Prime adhérent"
+    type: money
+    description: "Part de prime portant sur l'adhérent, quand elle est séparée de celle du conjoint."
+    aliases: ["prime adherent", "prime assure principal", "prime principal",
+              "prime titulaire"]
+    expect: { mostly: numeric, min_value: 0 }
+
+  prime_conjoint:
+    label: "Prime conjoint"
+    type: money
+    description: "Part de prime portant sur le conjoint (formules familiales)."
+    aliases: ["prime conjoint", "prime du conjoint", "prime epoux"]
+    expect: { mostly: numeric, min_value: 0 }
+
+  commission_partenaire:
+    label: "Commission partenaire"
+    type: money
+    description: "Commission revenant à la banque distributrice."
+    aliases: ["commission partenaire", "commission banque", "commission",
+              "commission distributeur", "retrocession", "com partenaire"]
+    expect: { mostly: numeric }
+
+  retention_assureur:
+    label: "Rétention assureur"
+    type: money
+    description: "Part de prime conservée par l'assureur."
+    aliases: ["retention assureur", "retention", "part assureur", "quote part assureur"]
+    expect: { mostly: numeric }
+
+  taux_prime:
+    label: "Taux de prime"
+    type: percent
+    description: "Taux appliqué au capital ou au montant du crédit pour obtenir la prime."
+    aliases: ["taux", "taux prime", "taux de prime", "taux applique", "tarif",
+              "taux assurance"]
+    expect: { mostly: numeric, min_value: 0 }
+
+  # -------------------------------------------------------------------- garanties
   capital_assure:
     label: "Capital assuré"
     type: money
     description: "Capital garanti par le contrat."
-    aliases:
-      - "capital assure"
-      - "capital"
-      - "montant assure"
-      - "capital garanti"
-      - "somme assuree"
-      - "montant credit"
-    expect:
-      mostly: numeric
-      min_value: 0
+    aliases: ["capital assure", "capital", "montant assure", "capital garanti",
+              "somme assuree", "capital deces", "capital souscrit"]
+    expect: { mostly: numeric, min_value: 0 }
 
-  duree:
-    label: "Durée"
+  montant_credit:
+    label: "Montant du crédit"
+    type: money
+    description: "Montant financé par la banque (produits adossés à un crédit)."
+    aliases: ["montant credit", "montant du credit", "montant finance",
+              "montant pret", "capital emprunte", "montant emprunte",
+              "montant du pret", "credit"]
+    expect: { mostly: numeric, min_value: 0 }
+
+  capital_restant_du:
+    label: "Capital restant dû"
+    type: money
+    description: "CRD : encours du crédit, base de l'indemnisation en ADE."
+    aliases: ["crd", "capital restant du", "capital restant", "encours",
+              "encours credit", "solde restant du", "restant du"]
+    expect: { mostly: numeric, min_value: 0 }
+
+  # ----------------------------------------------------------------- qualification
+  produit:
+    label: "Produit"
+    type: category
+    description: "Produit d'assurance vendu."
+    aliases: ["produit", "type produit", "type de produit", "garantie",
+              "type garantie", "formule", "gamme", "libelle produit", "offre"]
+    expect: { mostly: text, max_unique_ratio: 0.3 }
+
+  formule:
+    label: "Formule"
+    type: category
+    description: "Variante souscrite : classique/enrichie, individuelle/familiale, formule 1/2."
+    aliases: ["formule", "formule de couverture", "option", "variante",
+              "type de formule", "niveau de garantie", "couverture"]
+    expect: { mostly: text, max_unique_ratio: 0.2 }
+
+  sous_jacent:
+    label: "Sous-jacent"
+    type: category
+    description: "Ce à quoi l'assurance est adossée : crédit immobilier, compte, carte…"
+    aliases: ["sous jacent", "support", "produit bancaire", "type de credit",
+              "nature du credit", "objet"]
+    expect: { mostly: text, max_unique_ratio: 0.2 }
+
+  type_carte:
+    label: "Type de carte"
+    type: category
+    description: "Gamme de la carte bancaire support (Classic, Gold, Platinium)."
+    aliases: ["type carte", "type de carte", "carte", "gamme carte",
+              "categorie carte", "produit carte"]
+    expect: { mostly: text, max_unique_ratio: 0.2 }
+
+  package:
+    label: "Package"
+    type: category
+    description: "Package bancaire auquel l'assurance est rattachée (Classic, Prestige)."
+    aliases: ["package", "pack", "offre bancaire", "type de package", "formule pack"]
+    expect: { mostly: text, max_unique_ratio: 0.2 }
+
+  zone:
+    label: "Zone"
+    type: category
+    description: "Zone géographique couverte (assurance voyage)."
+    aliases: ["zone", "zone geographique", "zone de couverture", "destination",
+              "territorialite"]
+    expect: { mostly: text, max_unique_ratio: 0.2 }
+
+  nb_assures:
+    label: "Nombre d'assurés"
     type: integer
-    description: "Durée du contrat, en mois ou en années selon la banque."
-    aliases:
-      - "duree"
-      - "duree contrat"
-      - "duree en mois"
-      - "duree mois"
-      - "nb mois"
-      - "periode"
-    expect:
-      mostly: numeric
-      min_value: 0
-      max_value: 600
+    description: "Nombre de personnes couvertes (formules familiales)."
+    aliases: ["nb assures", "nombre assures", "nombre d assures", "nb personnes",
+              "nb beneficiaires", "effectif"]
+    expect: { mostly: numeric, min_value: 0, max_value: 30 }
 
-# Fields injected by the pipeline itself, never mapped from a sheet.
+  statut:
+    label: "Statut"
+    type: category
+    description: "État du contrat : en cours, résilié, racheté, suspendu."
+    aliases: ["statut", "etat", "etat du contrat", "situation", "statut contrat"]
+    expect: { mostly: text, max_unique_ratio: 0.2 }
+
+# Champs ajoutés par l'outil lui-même, jamais lus dans un fichier.
 derived_fields:
-  banque:        { label: "Banque",           type: category }
-  mois_reception: { label: "Mois réception",  type: period }
-  annee_reception: { label: "Année réception", type: integer }
-
-profiles:
-
-  # Full detail: keeps the premium breakdown where banks provide it.
-  detaille:
-    columns: [banque, mois_reception, num_contrat, nom_client, date_effet, produit,
-              agence, prime_nette, frais, prime_totale, capital_assure, duree]
-    required: [num_contrat, date_effet, prime_totale]
-
-  # Global premium only. The breakdown is collapsed away; banks that report
-  # nette + frais have prime_totale derived by the sum rule above.
-  powerbi_2025:
-    columns: [banque, mois_reception, num_contrat, nom_client, date_effet, produit,
-              agence, prime_totale, capital_assure]
-    required: [num_contrat, date_effet, prime_totale]
+  banque:          { label: "Banque",            type: category }
+  produit_code:    { label: "Code produit",      type: category }
+  mois_reception:  { label: "Mois réception",    type: period }
+  annee_reception: { label: "Année réception",   type: integer }

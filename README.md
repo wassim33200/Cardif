@@ -1,12 +1,16 @@
 # Cardif — offline consolidation of monthly bank sales
 
-Every month the partner banks send Excel files of life-insurance sales. Each bank uses
-its own format, fills it by hand, and changes it between months: the table does not start
-at row 1, there are leftover scratch numbers above and below it, column names differ per
-bank and per month, some banks give `prime nette + frais` and others only the global
-premium, and there is usually a `TOTAL` row at the bottom that poisons any grouping.
+Every month the partner banks send Excel files of insurance sales. Each bank sells
+**several products**, sends one file per product, fills them by hand, and changes them
+between months: the table does not start at row 1, there are leftover scratch numbers
+above and below it, column names differ per bank and per month, and there is usually a
+`TOTAL` row at the bottom that poisons any grouping.
 
-This tool turns that into a single analytical database per bank, ready for Power BI —
+Worse, the products do not even agree on what a sale *is*: an ADE has a credit, a CRD
+and a rate; a prévoyance has a chosen capital and a payment frequency; a travel policy
+has a zone.
+
+This tool turns that into one clean table per product, ready for Power BI —
 **entirely offline**. No cloud API, no telemetry, no data leaving the machine.
 
 ## The design in one paragraph
@@ -68,25 +72,42 @@ data/
     ...
 ```
 
-The folder names the bank (mapped in `config/banks.yaml`); the filename names the month.
+The folder names the bank (mapped in `config/banks.yaml`); the filename names **the
+product and the month**. One file per product per month is the expected layout:
+
+```
+data/
+  CNEP 2025/
+    ADE_Immobilier_Mars_2025.xlsx
+    SAHTI_Mars_2025.xlsx
+    CTP mars 2025.xlsx
+  BNPPED 2025/
+    ADE credit automobile 03-2025.xlsx
+    Assurcompte_2025_03.xlsx
+```
+
+A sub-folder per product works too: `CNEP 2025/SAHTI/ventes mars.xlsx`.
 
 ## What you get
 
 ```
 warehouse/
-  fact_ventes.parquet         all banks, one row per sale, `banque` as a column
-  par_banque/BNA.parquet      + .xlsx, per-bank extracts
-  dim_date.parquet            contiguous calendar with French labels
+  fact_ade_immobilier.parquet     one table per product, each with its own columns
+  fact_sahti.parquet
+  fact_cnep_total_prevoyance.parquet
+  …
+  dim_date.parquet                contiguous calendar with French labels
+  dim_produit.parquet             every product and its family, from the catalogue
   dim_banque.parquet
-  dim_produit.parquet
-  _manifest.json              which files are already ingested, with content hashes
-  audit.xlsx                  the full record (see below)
+  par_banque/CNEP_sahti.parquet   + .xlsx, extracts per bank AND per product
+  _manifest.json                  which files are ingested, with content hashes
+  audit.xlsx                      the full record (see below)
 ```
 
-**Point Power BI at `fact_ventes.parquet` and filter on `banque`.** The per-bank files
-exist for handing one bank its own data, but a single model with a bank filter gives
-cross-bank comparison for free, where separate tables force a duplicated report page per
-bank and make "all banks" impossible.
+**In Power BI, load the `fact_*` tables you need and relate them all to `dim_date`,
+`dim_banque` and `dim_produit`.** Each product table carries `banque`, `produit_code`
+and `mois_reception`, so a shared date and bank dimension gives you per-product reports
+and cross-product totals from the same model.
 
 Mark `dim_date` as the date table so time intelligence (YoY, YTD, rolling 12) works.
 
@@ -94,20 +115,40 @@ Mark `dim_date` as the date table so time intelligence (YoY, YTD, rolling 12) wo
 
 | File | What it holds |
 |---|---|
-| `config/schema.yaml` | the canonical fields, their French aliases, derivation rules, and the **export profiles** — this is where "I only want the global premium" is expressed |
+| `config/schema.yaml` | the catalogue of every field the tool can recognise, with its French aliases, its expected content, and its derivation rules |
+| `config/produits.yaml` | **the products.** Each one picks its fields from the catalogue and gives the words that identify it in a filename. Adding a product is a block here and no code at all |
 | `config/banks.yaml` | folder name → bank, plus per-bank overrides |
 | `config/settings.yaml` | model endpoint, thresholds, tolerances |
 | `config/aliases.yaml` | **the learned header map.** Grows every time you resolve a header. Back this up; it is the asset that makes the tool fast |
 
-An export profile is just a column list:
+## Products are the unit of everything
+
+Each bank sells several products, and **each product has its own columns**. An ADE is
+attached to a credit and carries a CRD and a rate; a prévoyance carries a chosen capital
+and a payment frequency; a travel policy carries a zone. Forcing them into one table
+would leave it mostly empty and impossible to read.
+
+So the product is detected from the filename (or a sub-folder), and it decides the
+shape of the output:
 
 ```yaml
-profiles:
-  powerbi_2025:
-    columns: [banque, mois_reception, num_contrat, nom_client, date_effet,
-              produit, agence, prime_totale, capital_assure]
-    required: [num_contrat, date_effet, prime_totale]
+produits:
+  sahti:
+    label: "SAHTI"
+    famille: sante
+    partenaires: [CNEP]
+    match: ["sahti", "sahty", "sante cnep"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, nom_client,
+               date_effet, formule, nb_assures, capital_assure, prime_totale]
+    requis: [num_contrat, date_effet, prime_totale]
 ```
+
+That block is the entire cost of adding a product. Matching only considers products the
+bank actually distributes, and the longest keyword wins, so `ADE immobilier` is never
+shadowed by `ADE`.
+
+A file whose product cannot be read is not rejected: it falls back to `generique`, which
+keeps the fields common to every product, and is flagged so you can rename it.
 
 A bank reporting only a total is used as-is. A bank reporting `nette + frais` has the
 total **derived** and tagged `prime_totale_source = derived`, so a computed figure is
@@ -159,10 +200,13 @@ rather than at random, so every pathology is guaranteed coverage.
 
 ## Adapting it to your files
 
-1. Run `cardif profile data/ -o entetes.xlsx`. That inventory is the ground truth for
-   what your banks actually send.
-2. Add the fields you need to `config/schema.yaml`, with the aliases you saw.
-3. Define an export profile with the columns you want.
-4. Add your banks to `config/banks.yaml`.
+1. Run `cardif scan data/` first. It shows, without opening anything, which bank,
+   product and month the tool reads from each path — fix any that come out blank by
+   renaming the file or adding a keyword to `produits.yaml`.
+2. Run `cardif profile data/ -o entetes.xlsx`. That inventory is the ground truth for
+   what your banks actually send, and it now shows which products each header appears in.
+3. Add any missing fields to `config/schema.yaml`, with the aliases you saw.
+4. Adjust each product's `colonnes` in `config/produits.yaml`, and add your banks to
+   `config/banks.yaml`.
 5. Run `cardif run data/ --audit audit.xlsx` and read the audit before committing
    anything.

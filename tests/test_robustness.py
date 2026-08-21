@@ -35,7 +35,7 @@ def hostile(tmp_path_factory) -> dict[str, Path]:
     return gen_hostile.build_all(tmp_path_factory.mktemp("hostile"))
 
 
-def _process(path: Path, config, mapper, profile="detaille"):
+def _process(path: Path, config, mapper, profile="ade_immobilier"):
     return process_file(read_meta(path, config.banks), config, mapper, profile)
 
 
@@ -55,7 +55,7 @@ class TestUnreadableFiles:
     def test_a_broken_file_does_not_stop_the_others(self, hostile, config):
         """One corrupt file in a folder must not cost you the whole month."""
         root = hostile["valid_baseline"].parent.parent
-        outcome = run(root, config, "detaille", use_model=False)
+        outcome = run(root, config, "ade_immobilier", use_model=False)
         assert outcome.ok_results, "no file survived a folder containing broken ones"
         assert outcome.skipped
         assert outcome.frame is not None and not outcome.frame.empty
@@ -94,7 +94,7 @@ class TestUncachedFormulas:
         self, tmp_path, config, mapper
     ):
         """Formulas are fine when Excel has stored their results, which is the norm."""
-        path = tmp_path / "BNA 2025" / "Ventes_Mars_2025.xlsx"
+        path = tmp_path / "CNEP 2025" / "ADE_Immobilier_Mars_2025.xlsx"
         path.parent.mkdir(parents=True)
         gen_hostile.valid_baseline(path)
         result = _process(path, config, mapper)
@@ -118,7 +118,7 @@ class TestStructurallyAwkward:
         assert any(m.canonical is None for m in result.mappings)
 
     def test_orphan_rows_below_a_gap_are_excluded(self, tmp_path, config, mapper):
-        path = tmp_path / "BNA 2025" / "Ventes_Mars_2025.xlsx"
+        path = tmp_path / "CNEP 2025" / "ADE_Immobilier_Mars_2025.xlsx"
         path.parent.mkdir(parents=True)
         gen_hostile.data_resuming_after_a_gap(path)
         result = _process(path, config, mapper)
@@ -126,7 +126,7 @@ class TestStructurallyAwkward:
         assert not result.frame["num_contrat"].str.startswith("ORPHAN").any()
 
     def test_merged_cells_down_a_data_column_are_filled(self, tmp_path, config, mapper):
-        path = tmp_path / "BNA 2025" / "Ventes_Mars_2025.xlsx"
+        path = tmp_path / "CNEP 2025" / "ADE_Immobilier_Mars_2025.xlsx"
         path.parent.mkdir(parents=True)
         gen_hostile.merged_cells_across_data(path)
         result = _process(path, config, mapper)
@@ -134,7 +134,7 @@ class TestStructurallyAwkward:
         assert (result.frame["agence"] == "Tunis Centre").all()
 
     def test_sales_sheet_is_chosen_over_a_parameters_tab(self, tmp_path, config, mapper):
-        path = tmp_path / "BNA 2025" / "Ventes_Mars_2025.xlsx"
+        path = tmp_path / "CNEP 2025" / "ADE_Immobilier_Mars_2025.xlsx"
         path.parent.mkdir(parents=True)
         gen_hostile.junk_sheet_before_data(path)
         result = _process(path, config, mapper)
@@ -142,14 +142,14 @@ class TestStructurallyAwkward:
         assert result.n_rows == 12
 
     def test_single_data_row(self, tmp_path, config, mapper):
-        path = tmp_path / "BNA 2025" / "Ventes_Mars_2025.xlsx"
+        path = tmp_path / "CNEP 2025" / "ADE_Immobilier_Mars_2025.xlsx"
         path.parent.mkdir(parents=True)
         gen_hostile.one_data_row(path)
         result = _process(path, config, mapper)
         assert result.ok and result.n_rows == 1
 
     def test_unicode_and_overlong_headers(self, tmp_path, config, mapper):
-        path = tmp_path / "BNA 2025" / "Ventes_Mars_2025.xlsx"
+        path = tmp_path / "CNEP 2025" / "ADE_Immobilier_Mars_2025.xlsx"
         path.parent.mkdir(parents=True)
         gen_hostile.unicode_and_long_headers(path)
         result = _process(path, config, mapper)
@@ -157,7 +157,7 @@ class TestStructurallyAwkward:
         assert result.frame["num_contrat"].notna().all()
 
     def test_two_hundred_columns(self, tmp_path, config, mapper):
-        path = tmp_path / "BNA 2025" / "Ventes_Mars_2025.xlsx"
+        path = tmp_path / "CNEP 2025" / "ADE_Immobilier_Mars_2025.xlsx"
         path.parent.mkdir(parents=True)
         workbook = Workbook()
         worksheet = workbook.active
@@ -173,7 +173,7 @@ class TestStructurallyAwkward:
 
 class TestValueEdges:
     def test_extreme_values_survive_without_corruption(self, tmp_path, config, mapper):
-        path = tmp_path / "BNA 2025" / "Ventes_Mars_2025.xlsx"
+        path = tmp_path / "CNEP 2025" / "ADE_Immobilier_Mars_2025.xlsx"
         path.parent.mkdir(parents=True)
         gen_hostile.extreme_values(path)
         result = _process(path, config, mapper)
@@ -187,7 +187,7 @@ class TestValueEdges:
         assert result.frame["date_effet"].isna().sum() == 1
 
     def test_mixed_number_formats_in_one_column(self, tmp_path, config, mapper):
-        path = tmp_path / "BNA 2025" / "Ventes_Mars_2025.xlsx"
+        path = tmp_path / "CNEP 2025" / "ADE_Immobilier_Mars_2025.xlsx"
         path.parent.mkdir(parents=True)
         gen_hostile.numbers_as_text_mixed(path)
         result = _process(path, config, mapper)
@@ -196,7 +196,7 @@ class TestValueEdges:
         assert result.frame["prime_totale"].max() == pytest.approx(2500.0)
 
     def test_identifiers_mangled_into_floats_are_recovered(self, tmp_path, config, mapper):
-        path = tmp_path / "BNA 2025" / "Ventes_Mars_2025.xlsx"
+        path = tmp_path / "CNEP 2025" / "ADE_Immobilier_Mars_2025.xlsx"
         path.parent.mkdir(parents=True)
         gen_hostile.identifiers_mangled_by_excel(path)
         result = _process(path, config, mapper)
@@ -210,25 +210,25 @@ class TestMonthDeliveredTwice:
 
     @pytest.fixture
     def two_files_one_month(self, tmp_path):
-        folder = tmp_path / "BNA 2025"
+        folder = tmp_path / "CNEP 2025"
         folder.mkdir(parents=True)
-        gen_hostile.valid_baseline(folder / "Ventes_Mars_2025.xlsx", rows=10, month=3)
-        gen_hostile.valid_baseline(folder / "Ventes_Mars_2025_corrige.xlsx", rows=10, month=3)
+        gen_hostile.valid_baseline(folder / "ADE_Immobilier_Mars_2025.xlsx", rows=10, month=3)
+        gen_hostile.valid_baseline(folder / "ADE_Immobilier_Mars_2025_corrige.xlsx", rows=10, month=3)
         return tmp_path
 
     def test_raises_an_error_not_a_footnote(self, two_files_one_month, config):
-        outcome = run(two_files_one_month, config, "detaille", use_model=False)
+        outcome = run(two_files_one_month, config, "ade_immobilier", use_model=False)
         coverage = [
             f for f in outcome.validation.flags if f.code == "period_covered_twice"
         ]
         assert len(coverage) == 1
         assert coverage[0].severity == "error"
         assert "double" in coverage[0].message.lower()
-        assert "Ventes_Mars_2025.xlsx" in coverage[0].message
+        assert "ADE_Immobilier_Mars_2025.xlsx" in coverage[0].message
 
     def test_stated_once_per_month_not_once_per_contract(self, two_files_one_month, config):
         """Dozens of identical lines is noise, and noise gets ignored."""
-        outcome = run(two_files_one_month, config, "detaille", use_model=False)
+        outcome = run(two_files_one_month, config, "ade_immobilier", use_model=False)
         assert len(outcome.validation.flags) < 5
 
     def test_commit_actually_refuses_to_write(self, two_files_one_month, tmp_path):
@@ -241,11 +241,10 @@ class TestMonthDeliveredTwice:
             "commit", str(two_files_one_month),
             "--config", str(config_dir),
             "--warehouse", str(warehouse),
-            "--profile", "detaille",
             "--no-model",
         ])
         assert code != 0
-        assert not (warehouse / "fact_ventes.parquet").exists()
+        assert not list(warehouse.glob("fact_*.parquet"))
 
     def test_allow_errors_lets_it_through_deliberately(self, two_files_one_month, tmp_path):
         """The override exists, but it has to be asked for."""
@@ -257,18 +256,17 @@ class TestMonthDeliveredTwice:
             "commit", str(two_files_one_month),
             "--config", str(config_dir),
             "--warehouse", str(warehouse),
-            "--profile", "detaille",
             "--no-model", "--allow-errors",
         ])
         assert code == 0
-        assert (warehouse / "fact_ventes.parquet").exists()
+        assert list(warehouse.glob("fact_*.parquet"))
 
     def test_one_file_per_month_raises_nothing(self, tmp_path, config):
-        folder = tmp_path / "BNA 2025"
+        folder = tmp_path / "CNEP 2025"
         folder.mkdir(parents=True)
-        gen_hostile.valid_baseline(folder / "Ventes_Mars_2025.xlsx", month=3)
-        gen_hostile.valid_baseline(folder / "Ventes_Avril_2025.xlsx", month=4)
-        outcome = run(tmp_path, config, "detaille", use_model=False)
+        gen_hostile.valid_baseline(folder / "ADE_Immobilier_Mars_2025.xlsx", month=3)
+        gen_hostile.valid_baseline(folder / "ADE_Immobilier_Avril_2025.xlsx", month=4)
+        outcome = run(tmp_path, config, "ade_immobilier", use_model=False)
         assert check_period_coverage(outcome.frame) == []
 
 
@@ -282,7 +280,8 @@ class TestConfigValidation:
         source = Path(__file__).resolve().parent.parent / "config"
         target = tmp_path / "config"
         target.mkdir()
-        for name in ("schema.yaml", "banks.yaml", "settings.yaml", "aliases.yaml"):
+        for name in ("schema.yaml", "banks.yaml", "settings.yaml", "aliases.yaml",
+                     "produits.yaml"):
             shutil.copy(source / name, target / name)
         return target
 
@@ -292,10 +291,23 @@ class TestConfigValidation:
         assert old in text
         path.write_text(text.replace(old, new), encoding="utf-8")
 
-    def test_unknown_export_profile(self, config_dir):
+    def test_unknown_fallback_product(self, config_dir):
         self._edit(config_dir, "settings.yaml",
-                   'profile: "powerbi_2025"', 'profile: "nexiste_pas"')
+                   'profile: "generique"', 'profile: "nexiste_pas"')
         with pytest.raises(Exception, match="nexiste_pas"):
+            load_config(config_dir)
+
+    def test_product_naming_an_unknown_field(self, config_dir):
+        """A typo in produits.yaml must fail at load, not mid-run."""
+        self._edit(config_dir, "produits.yaml",
+                   "capital_restant_du, formule, taux_prime",
+                   "capital_restant_du, chose_inexistante, taux_prime")
+        with pytest.raises(Exception, match="chose_inexistante"):
+            load_config(config_dir)
+
+    def test_missing_produits_file_says_which(self, config_dir):
+        (config_dir / "produits.yaml").unlink()
+        with pytest.raises(FileNotFoundError, match="produits.yaml"):
             load_config(config_dir)
 
     def test_negative_premium_tolerance(self, config_dir):
@@ -308,12 +320,6 @@ class TestConfigValidation:
         self._edit(config_dir, "settings.yaml",
                    "fuzzy_suggest_floor: 70", "fuzzy_suggest_floor: 99")
         with pytest.raises(Exception, match="fuzzy_suggest_floor"):
-            load_config(config_dir)
-
-    def test_profile_naming_an_unknown_field(self, config_dir):
-        self._edit(config_dir, "schema.yaml",
-                   "prime_totale, capital_assure]", "prime_totale, chose_inexistante]")
-        with pytest.raises(Exception, match="chose_inexistante"):
             load_config(config_dir)
 
     def test_missing_config_file_says_which(self, config_dir):
@@ -340,7 +346,7 @@ class TestFilenameEdges:
     def test_unreadable_filenames_are_reported_not_guessed(
         self, tmp_path, config, mapper, filename
     ):
-        folder = tmp_path / "BNA 2025"
+        folder = tmp_path / "CNEP 2025"
         folder.mkdir(parents=True)
         path = folder / filename
         gen_hostile.valid_baseline(path)
@@ -353,7 +359,7 @@ class TestFilenameEdges:
     def test_unknown_bank_folder_is_reported(self, tmp_path, config, mapper):
         folder = tmp_path / "BanqueInconnue 2025"
         folder.mkdir(parents=True)
-        path = folder / "Ventes_Mars_2025.xlsx"
+        path = folder / "ADE_Immobilier_Mars_2025.xlsx"
         gen_hostile.valid_baseline(path)
         result = _process(path, config, mapper)
         assert not result.ok
@@ -361,10 +367,10 @@ class TestFilenameEdges:
         assert "BanqueInconnue" in result.error
 
     def test_excel_lock_files_are_skipped(self, tmp_path, config):
-        folder = tmp_path / "BNA 2025"
+        folder = tmp_path / "CNEP 2025"
         folder.mkdir(parents=True)
-        gen_hostile.valid_baseline(folder / "Ventes_Mars_2025.xlsx")
-        (folder / "~$Ventes_Mars_2025.xlsx").write_bytes(b"lock")
+        gen_hostile.valid_baseline(folder / "ADE_Immobilier_Mars_2025.xlsx")
+        (folder / "~$ADE_Immobilier_Mars_2025.xlsx").write_bytes(b"lock")
         assert len(scan(tmp_path, config.banks)) == 1
 
 
@@ -372,7 +378,7 @@ class TestWarehouseEdges:
     def test_committing_nothing_is_harmless(self, tmp_path, config):
         from cardif.pipeline import RunResult
 
-        summary = commit(RunResult(profile_name="detaille"), config, tmp_path / "wh")
+        summary = commit(RunResult(profile_name="ade_immobilier"), config, tmp_path / "wh")
         assert summary["written"] == 0
 
     def test_reading_an_absent_warehouse_returns_empty(self, tmp_path, config):
@@ -380,17 +386,17 @@ class TestWarehouseEdges:
 
     def test_manifest_survives_a_file_that_moved(self, tmp_path, config):
         """A path in the manifest that no longer exists must not crash the scan."""
-        warehouse = Warehouse(config, tmp_path / "wh", "detaille")
-        folder = tmp_path / "BNA 2025"
+        warehouse = Warehouse(config, tmp_path / "wh", "ade_immobilier")
+        folder = tmp_path / "CNEP 2025"
         folder.mkdir(parents=True)
-        path = folder / "Ventes_Mars_2025.xlsx"
+        path = folder / "ADE_Immobilier_Mars_2025.xlsx"
         gen_hostile.valid_baseline(path)
 
-        outcome = run(tmp_path, config, "detaille", use_model=False)
+        outcome = run(tmp_path, config, "ade_immobilier", use_model=False)
         commit(outcome, config, tmp_path / "wh")
 
         path.unlink()
-        reopened = Warehouse(config, tmp_path / "wh", "detaille")
+        reopened = Warehouse(config, tmp_path / "wh", "ade_immobilier")
         assert len(reopened.read_fact()) > 0
         assert reopened.pending([])["new"] == []
 
@@ -404,41 +410,43 @@ class TestWarehouseDurability:
 
     @pytest.fixture
     def seeded(self, tmp_path, config):
-        folder = tmp_path / "data" / "BNA 2025"
+        folder = tmp_path / "data" / "CNEP 2025"
         folder.mkdir(parents=True)
-        gen_hostile.valid_baseline(folder / "Ventes_Mars_2025.xlsx", rows=20, month=3)
+        gen_hostile.valid_baseline(folder / "ADE_Immobilier_Mars_2025.xlsx", rows=20, month=3)
         warehouse_dir = tmp_path / "wh"
-        commit(run(tmp_path / "data", config, "detaille", use_model=False),
+        commit(run(tmp_path / "data", config, "ade_immobilier", use_model=False),
                config, warehouse_dir)
-        gen_hostile.valid_baseline(folder / "Ventes_Avril_2025.xlsx", rows=15, month=4)
-        commit(run(tmp_path / "data", config, "detaille", use_model=False),
+        gen_hostile.valid_baseline(folder / "ADE_Immobilier_Avril_2025.xlsx", rows=15, month=4)
+        commit(run(tmp_path / "data", config, "ade_immobilier", use_model=False),
                config, warehouse_dir)
         return warehouse_dir
 
+    PRODUIT = "ade_immobilier"
+
     def test_a_backup_is_kept(self, seeded):
-        assert (seeded / "fact_ventes.parquet.bak").exists()
+        assert (seeded / f"fact_{self.PRODUIT}.parquet.bak").exists()
 
     def test_truncated_fact_table_is_reported_not_raised_raw(self, seeded, config):
         from cardif.store import WarehouseCorrupt
 
-        fact = seeded / "fact_ventes.parquet"
+        fact = seeded / f"fact_{self.PRODUIT}.parquet"
         data = fact.read_bytes()
         fact.write_bytes(data[: len(data) // 2])
 
         with pytest.raises(WarehouseCorrupt) as caught:
-            Warehouse(config, seeded, "detaille").read_fact()
+            Warehouse(config, seeded, self.PRODUIT).read_fact(self.PRODUIT)
         message = str(caught.value)
-        assert "backup" in message
-        assert "fact_ventes.parquet.bak" in message
+        assert "sauvegarde" in message
+        assert f"fact_{self.PRODUIT}.parquet.bak" in message
 
     def test_the_backup_actually_restores(self, seeded, config):
         import shutil
 
-        fact = seeded / "fact_ventes.parquet"
-        before = len(Warehouse(config, seeded, "detaille").read_fact())
+        fact = seeded / f"fact_{self.PRODUIT}.parquet"
+        before = len(Warehouse(config, seeded, self.PRODUIT).read_fact(self.PRODUIT))
         fact.write_bytes(b"ruined")
-        shutil.copy(seeded / "fact_ventes.parquet.bak", fact)
-        recovered = len(Warehouse(config, seeded, "detaille").read_fact())
+        shutil.copy(seeded / f"fact_{self.PRODUIT}.parquet.bak", fact)
+        recovered = len(Warehouse(config, seeded, self.PRODUIT).read_fact(self.PRODUIT))
         assert 0 < recovered <= before
 
     def test_no_backup_still_gives_a_route_forward(self, tmp_path, config):
@@ -446,9 +454,9 @@ class TestWarehouseDurability:
 
         warehouse_dir = tmp_path / "wh"
         warehouse_dir.mkdir()
-        (warehouse_dir / "fact_ventes.parquet").write_bytes(b"not parquet")
-        with pytest.raises(WarehouseCorrupt, match="Re-ingest"):
-            Warehouse(config, warehouse_dir, "detaille").read_fact()
+        (warehouse_dir / f"fact_{self.PRODUIT}.parquet").write_bytes(b"not parquet")
+        with pytest.raises(WarehouseCorrupt, match="Retraitez"):
+            Warehouse(config, warehouse_dir, self.PRODUIT).read_fact(self.PRODUIT)
 
     def test_no_temporary_files_are_left_behind(self, seeded):
         leftovers = [p.name for p in seeded.rglob("*.tmp")]
@@ -459,58 +467,59 @@ class TestWarehouseDurability:
 
         warehouse_dir = tmp_path / "wh"
         warehouse_dir.mkdir()
-        (warehouse_dir / "fact_ventes.parquet").write_bytes(b"not parquet")
+        (warehouse_dir / "fact_ade_immobilier.parquet").write_bytes(b"not parquet")
         config_dir = Path(__file__).resolve().parent.parent / "config"
 
         code = main(["status", "--config", str(config_dir), "--warehouse", str(warehouse_dir)])
         assert code == 4
-        assert "unreadable" in capsys.readouterr().out
+        assert "illisible" in capsys.readouterr().out
 
 
 class TestBankExtracts:
-    def test_only_the_banks_in_this_commit_are_rewritten(self, tmp_path, config):
-        """Rewriting every bank's whole history on every commit does not scale."""
+    def test_only_the_products_in_this_commit_are_rewritten(self, tmp_path, config):
+        """Rewriting every product's whole history on every commit does not scale."""
         data = tmp_path / "data"
-        for bank in ("BNA", "BIAT"):
-            folder = data / f"{bank} 2025"
-            folder.mkdir(parents=True)
-            gen_hostile.valid_baseline(folder / "Ventes_Mars_2025.xlsx", rows=10, month=3)
+        folder = data / "CNEP 2025"
+        folder.mkdir(parents=True)
+        gen_hostile.valid_baseline(folder / "ADE_Immobilier_Mars_2025.xlsx",
+                                   rows=10, month=3)
+        gen_hostile.valid_baseline(folder / "SAHTI_Mars_2025.xlsx", rows=10, month=3)
 
         warehouse_dir = tmp_path / "wh"
-        commit(run(data, config, "detaille", use_model=False), config, warehouse_dir)
+        commit(run(data, config, use_model=False), config, warehouse_dir)
 
-        biat = warehouse_dir / "par_banque" / "BIAT.parquet"
-        untouched_before = biat.stat().st_mtime_ns
+        sahti = warehouse_dir / "par_banque" / "CNEP_sahti.parquet"
+        assert sahti.exists()
+        untouched_before = sahti.stat().st_mtime_ns
 
         gen_hostile.valid_baseline(
-            data / "BNA 2025" / "Ventes_Avril_2025.xlsx", rows=10, month=4
+            folder / "ADE_Immobilier_Avril_2025.xlsx", rows=10, month=4
         )
-        warehouse = Warehouse(config, warehouse_dir, "detaille")
-        todo = warehouse.pending([m.path for m in scan(data, config.banks)])
-        outcome = run(data, config, "detaille", use_model=False,
-                      only=todo["new"] + todo["changed"])
+        warehouse = Warehouse(config, warehouse_dir)
+        todo = warehouse.pending([m.path for m in scan(data, config.banks, config.schema_)])
+        outcome = run(data, config, use_model=False, only=todo["new"] + todo["changed"])
         commit(outcome, config, warehouse_dir)
 
-        assert biat.stat().st_mtime_ns == untouched_before
-        assert (warehouse_dir / "par_banque" / "BNA.parquet").exists()
+        assert sahti.stat().st_mtime_ns == untouched_before
+        assert (warehouse_dir / "par_banque" / "CNEP_ade_immobilier.parquet").exists()
 
     def test_an_extract_too_large_for_excel_is_reported(self, tmp_path, config):
         """Silence would leave a stale .xlsx looking current."""
         config.settings.warehouse.xlsx_row_limit = 5
-        data = tmp_path / "data" / "BNA 2025"
+        data = tmp_path / "data" / "CNEP 2025"
         data.mkdir(parents=True)
-        gen_hostile.valid_baseline(data / "Ventes_Mars_2025.xlsx", rows=20, month=3)
+        gen_hostile.valid_baseline(data / "ADE_Immobilier_Mars_2025.xlsx",
+                                   rows=20, month=3)
 
         warehouse_dir = tmp_path / "wh"
         summary = commit(
-            run(tmp_path / "data", config, "detaille", use_model=False),
-            config, warehouse_dir,
+            run(tmp_path / "data", config, use_model=False), config, warehouse_dir
         )
         assert "skipped_xlsx" in summary
-        assert "exceeds the Excel limit" in summary["skipped_xlsx"][0]
-        assert not (warehouse_dir / "par_banque" / "BNA.xlsx").exists()
+        assert "limite excel" in summary["skipped_xlsx"][0].lower()
+        assert not (warehouse_dir / "par_banque" / "CNEP_ade_immobilier.xlsx").exists()
         # The full data is still available in the format that has no such limit.
-        assert (warehouse_dir / "par_banque" / "BNA.parquet").exists()
+        assert (warehouse_dir / "par_banque" / "CNEP_ade_immobilier.parquet").exists()
 
 
 class TestScaling:
@@ -521,11 +530,11 @@ class TestScaling:
         for name in ("mars.xlsx", "mars_corrige.xlsx"):
             for i in range(contracts):
                 rows.append({
-                    "banque": "BNA", "mois_reception": "2025-03",
+                    "banque": "CNEP", "mois_reception": "2025-03",
                     "num_contrat": f"C-{i:06d}",
                     "date_effet": pd.Timestamp("2025-03-05"),
                     "prime_totale": 100.0,
-                    "source_file": f"BNA 2025/{name}",
+                    "source_file": f"CNEP 2025/{name}",
                     "source_row": i + 2, "row_hash": f"{name}-{i}",
                 })
         return pd.DataFrame(rows)
@@ -564,13 +573,13 @@ class TestScaling:
         n = 40_000
         rng = np.random.default_rng(0)
         frame = pd.DataFrame({
-            "banque": ["BNA"] * n, "mois_reception": ["2025-03"] * n,
+            "banque": ["CNEP"] * n, "mois_reception": ["2025-03"] * n,
             "num_contrat": [f"C-{i:07d}" for i in range(n)],
             "date_effet": pd.to_datetime(["2025-03-05"] * n),
             "prime_nette": rng.uniform(80, 4000, n).round(2),
             "frais": rng.uniform(5, 300, n).round(2),
             "capital_assure": rng.uniform(1e4, 5e5, n).round(2),
-            "source_file": ["BNA 2025/mars.xlsx"] * n, "source_sheet": ["F"] * n,
+            "source_file": ["CNEP 2025/mars.xlsx"] * n, "source_sheet": ["F"] * n,
             "source_row": range(2, n + 2), "ingested_at": ["x"] * n,
             "row_hash": [f"h{i}" for i in range(n)],
         })
@@ -578,7 +587,7 @@ class TestScaling:
         frame["prime_totale_source"] = "reported"
 
         start = time.perf_counter()
-        report = validate(frame, config, "detaille")
+        report = validate(frame, config, "ade_immobilier")
         elapsed = time.perf_counter() - start
 
         assert report.flags == []
@@ -588,17 +597,17 @@ class TestScaling:
         """Speed must not come from checking fewer rows."""
         n = 2_000
         frame = pd.DataFrame({
-            "banque": ["BNA"] * n, "mois_reception": ["2025-03"] * n,
+            "banque": ["CNEP"] * n, "mois_reception": ["2025-03"] * n,
             "num_contrat": [f"C-{i:05d}" for i in range(n)],
             "date_effet": pd.to_datetime(["2025-03-05"] * n),
             "prime_nette": [100.0] * n, "frais": [10.0] * n,
             "prime_totale": [110.0] * n, "prime_totale_source": ["reported"] * n,
-            "source_file": ["BNA 2025/mars.xlsx"] * n, "source_sheet": ["F"] * n,
+            "source_file": ["CNEP 2025/mars.xlsx"] * n, "source_sheet": ["F"] * n,
             "source_row": range(2, n + 2), "ingested_at": ["x"] * n,
             "row_hash": [f"h{i}" for i in range(n)],
         })
         frame.loc[frame.index[:137], "prime_totale"] = 9999.99
-        report = validate(frame, config, "detaille")
+        report = validate(frame, config, "ade_immobilier")
         mismatches = [f for f in report.flags if f.code == "premium_mismatch"]
         assert len(mismatches) == 137
 

@@ -41,6 +41,7 @@ class FileResult:
 
     meta: FileMeta
     sheet: str = ""
+    produit: str = ""
     table: SheetTable | None = None
     mappings: list[MappingResult] = field(default_factory=list)
     frame: pd.DataFrame | None = None
@@ -173,8 +174,9 @@ def build_frame(
     config: Config,
     profile_name: str,
 ) -> tuple[pd.DataFrame, list[ColumnReport], dict[str, str], list[str]]:
-    """Assemble the tidy frame for one sheet according to the export profile."""
-    profile = config.schema_.profiles[profile_name]
+    """Assemble the tidy frame for one sheet, shaped by the file's product."""
+    produit_code = profile_name
+    profile = config.produit(profile_name)
     schema = config.schema_
 
     # Which sheet column feeds which canonical field.
@@ -214,6 +216,8 @@ def build_frame(
     for name in profile.columns:
         if name == "banque":
             data[name] = [meta.bank_code] * n_rows
+        elif name == "produit_code":
+            data[name] = [produit_code] * n_rows
         elif name == "mois_reception":
             data[name] = [meta.period] * n_rows
         elif name == "annee_reception":
@@ -278,8 +282,13 @@ def process_file(
     ``overrides`` maps a normalized header to a canonical field, letting the UI inject
     the human's decisions without those decisions having to be learned first.
     """
-    profile_name = profile_name or config.settings.warehouse.profile
-    result = FileResult(meta=meta)
+    # The product decides the shape of the output, and it is a property of the file,
+    # not a global setting: one bank sends an ADE file and a SAHTI file in the same
+    # month, and they have almost nothing in common.
+    profile_name = profile_name or meta.produit or config.settings.warehouse.profile
+    if profile_name not in config.schema_.profiles:
+        profile_name = config.settings.warehouse.profile
+    result = FileResult(meta=meta, produit=profile_name)
 
     # Messages here are read by people who did not write this tool, so each one says
     # what happened and what to do about it, in the language of the files.
@@ -355,7 +364,8 @@ def process_file(
                 return result
 
         mappings = mapper.resolve_table(
-            table.headers, table.rows, meta.bank_code, table.header_parts
+            table.headers, table.rows, meta.bank_code, table.header_parts,
+            produit=profile_name,
         )
         if overrides:
             for mapping in mappings:
@@ -379,6 +389,11 @@ def process_file(
         if missing:
             result.notes.append(
                 "Colonnes obligatoires absentes de ce fichier : " + ", ".join(missing)
+            )
+        if meta.produit is None:
+            result.notes.append(
+                f"Produit non identifié : traité avec le format de repli "
+                f"« {config.produit(profile_name).label} »."
             )
     finally:
         workbook.close()

@@ -22,7 +22,7 @@ from .validate import ValidationReport, reconciliation_table
 
 # Column widths chosen so the sheets are readable without fiddling.
 _WIDTHS = {
-    "fichier": 34, "source_file": 46, "message": 80, "raison": 34, "motif": 34,
+    "fichier": 34, "produit": 22, "produit_detecte": 16, "source_file": 46, "message": 80, "raison": 34, "motif": 34,
     "en_tete": 26, "champ": 18, "methode": 12, "libelle": 26, "note": 60,
     "avertissements": 60, "banque": 10, "mois_reception": 14,
 }
@@ -36,6 +36,8 @@ def summary_frame(results: list[FileResult]) -> pd.DataFrame:
         rows.append({
             "fichier": Path(result.meta.path).name,
             "banque": result.meta.bank_code or "",
+            "produit": result.produit or "",
+            "produit_detecte": result.meta.produit_method,
             "mois_reception": result.meta.period or "",
             "periode_source": result.meta.period_method,
             "feuille": result.sheet,
@@ -65,6 +67,7 @@ def mappings_frame(results: list[FileResult]) -> pd.DataFrame:
             rows.append({
                 "fichier": Path(result.meta.path).name,
                 "banque": result.meta.bank_code or "",
+                "produit": result.produit or "",
                 "mois_reception": result.meta.period or "",
                 "en_tete": mapping.header,
                 "en_tete_normalise": mapping.normalized,
@@ -143,7 +146,11 @@ def _autosize(worksheet, frame: pd.DataFrame) -> None:
         width = _WIDTHS.get(column)
         if width is None:
             longest = frame[column].astype(str).str.len().max() if len(frame) else 0
-            width = min(40, max(12, int(longest or 0) + 2, len(str(column)) + 2))
+            # An all-empty column yields NaN, and NaN is truthy, so `longest or 0`
+            # would let it through to int() and raise.
+            if longest is None or longest != longest:
+                longest = 0
+            width = min(40, max(12, int(longest) + 2, len(str(column)) + 2))
         worksheet.column_dimensions[get_column_letter(index)].width = width
 
 

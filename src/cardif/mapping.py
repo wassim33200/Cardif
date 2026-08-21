@@ -187,7 +187,14 @@ class Mapper:
         }
         self.candidates = list(config.schema_.fields)
 
-    def _exact(self, normalized: str, bank: str | None) -> tuple[str | None, str]:
+    def _exact(
+        self, normalized: str, bank: str | None, produit: str | None = None
+    ) -> tuple[str | None, str]:
+        # A product's own aliases win over everything: "capital souscrit" means the
+        # sum insured in a prevoyance file and nothing at all in an ADE file.
+        specifique = self.config.aliases_du_produit(produit)
+        if normalized in specifique:
+            return specifique[normalized], "intitulé propre au produit"
         learned = self.config.aliases.lookup(normalized, bank)
         if learned:
             return learned, "learned alias"
@@ -228,6 +235,7 @@ class Mapper:
         values: list,
         bank: str | None = None,
         leaf: str | None = None,
+        produit: str | None = None,
     ) -> MappingResult:
         """Resolve a single header through the tiers.
 
@@ -250,11 +258,11 @@ class Mapper:
             return result
 
         # --- tier 1 ---------------------------------------------------------------
-        canonical, why = self._exact(normalized, bank)
+        canonical, why = self._exact(normalized, bank, produit)
         if canonical is None and leaf:
             normalized_leaf = normalize_header(leaf)
             if normalized_leaf and normalized_leaf != normalized:
-                canonical, why = self._exact(normalized_leaf, bank)
+                canonical, why = self._exact(normalized_leaf, bank, produit)
                 if canonical:
                     why = f"{why}, on the sub-heading '{leaf}'"
         if canonical:
@@ -310,6 +318,7 @@ class Mapper:
         rows: list[list],
         bank: str | None = None,
         header_parts: list[list[str]] | None = None,
+        produit: str | None = None,
     ) -> list[MappingResult]:
         """Resolve every header of a sheet, then reconcile conflicts between them.
 
@@ -322,7 +331,9 @@ class Mapper:
             values = [row[index] if index < len(row) else None for row in rows]
             parts = header_parts[index] if header_parts and index < len(header_parts) else None
             leaf = parts[-1] if parts and len(parts) > 1 else None
-            results.append(self.resolve_header(header, index, values, bank, leaf))
+            results.append(
+                self.resolve_header(header, index, values, bank, leaf, produit)
+            )
 
         claims: dict[str, list[MappingResult]] = {}
         for result in results:

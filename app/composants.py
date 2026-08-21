@@ -201,6 +201,13 @@ def pour_affichage(frame, config, profil: str, technique: bool = False):
     if not technique:
         sortie = sortie.drop(columns=COLONNES_TECHNIQUES, errors="ignore")
 
+    # Le code interne du produit ne veut rien dire pour un lecteur : on affiche son nom.
+    if "produit_code" in sortie.columns:
+        libelles = {c: config.produit(c).label for c in config.schema_.profiles}
+        sortie["produit_code"] = sortie["produit_code"].map(
+            lambda code: libelles.get(code, code)
+        )
+
     for colonne in sortie.columns:
         if pd.api.types.is_datetime64_any_dtype(sortie[colonne]):
             sortie[colonne] = sortie[colonne].dt.strftime("%d/%m/%Y")
@@ -209,6 +216,9 @@ def pour_affichage(frame, config, profil: str, technique: bool = False):
             sortie[colonne] = sortie[colonne].map(
                 lambda valeur: remplacements.get(valeur, valeur)
             )
+
+    # Une case vide doit rester vide : « None » à l'écran ressemble à une valeur.
+    sortie = sortie.astype(object).where(sortie.notna(), "")
 
     etiquettes = dict(config.schema_.label_map(profil))
     etiquettes.update(EN_TETES_LISIBLES)

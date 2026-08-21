@@ -36,10 +36,50 @@ class TestLesFichiersProduits:
         assert len(dossiers) == resume["banques"]
         assert all(any(p.glob("*.xlsx")) for p in dossiers)
 
-    def test_douze_mois_par_banque(self, exemple):
+    def test_douze_mois_par_produit_et_par_banque(self, exemple):
+        """Chaque banque envoie un fichier par produit et par mois."""
+        dossier, resume = exemple
+        total = sum(
+            len(list(banque.glob("*.xlsx")))
+            for banque in dossier.iterdir() if banque.is_dir()
+        )
+        assert total == resume["fichiers"]
+        assert total % 12 == 0, "chaque produit doit couvrir douze mois"
+
+    def test_plusieurs_produits_par_banque(self, exemple):
+        """Le sujet même de l'outil : une banque vend plusieurs produits."""
+        import sys
+        sys.path.insert(0, str(RACINE / "src"))
+        from cardif.config import load_config
+        from cardif.filemeta import scan
+
+        dossier, resume = exemple
+        config = load_config(RACINE / "config")
+        metas = scan(dossier, config.banks, config.schema_)
+
+        par_banque: dict[str, set[str]] = {}
+        for meta in metas:
+            if meta.bank_code and meta.produit:
+                par_banque.setdefault(meta.bank_code, set()).add(meta.produit)
+
+        assert par_banque, "aucun fichier rattaché à une banque et à un produit"
+        for banque, produits in par_banque.items():
+            assert len(produits) > 1, f"{banque} ne vend qu'un produit dans l'exemple"
+
+    def test_chaque_fichier_nomme_son_produit(self, exemple):
+        """Sans cela, l'outil ne saurait pas quel format appliquer."""
+        import sys
+        sys.path.insert(0, str(RACINE / "src"))
+        from cardif.config import load_config
+        from cardif.filemeta import scan
+
         dossier, _ = exemple
-        for banque in (p for p in dossier.iterdir() if p.is_dir()):
-            assert len(list(banque.glob("*.xlsx"))) == 12
+        config = load_config(RACINE / "config")
+        non_identifies = [
+            m.path.name for m in scan(dossier, config.banks, config.schema_)
+            if m.produit is None
+        ]
+        assert non_identifies == []
 
     def test_une_note_explique_ce_que_sont_ces_fichiers(self, exemple):
         dossier, _ = exemple
@@ -99,7 +139,7 @@ class TestLeParcoursDeDemonstration:
 
     def test_tout_passe_sans_une_seule_erreur(self, exemple, config):
         dossier, resume = exemple
-        resultat = run(dossier, config, "powerbi_2025", use_model=False)
+        resultat = run(dossier, config, use_model=False)
 
         assert resultat.skipped == [], "un fichier d'exemple n'a pas pu être traité"
         assert len(resultat.ok_results) == resume["fichiers"]
@@ -108,41 +148,43 @@ class TestLeParcoursDeDemonstration:
     def test_aucune_colonne_ne_reste_a_deviner(self, exemple, config):
         """The demo must not open on a question the colleague cannot answer."""
         dossier, _ = exemple
-        resultat = run(dossier, config, "powerbi_2025", use_model=False)
+        resultat = run(dossier, config, use_model=False)
         assert resultat.unresolved_headers() == {}
 
     def test_aucune_anomalie_bloquante(self, exemple, config):
         dossier, _ = exemple
-        resultat = run(dossier, config, "powerbi_2025", use_model=False)
+        resultat = run(dossier, config, use_model=False)
         assert resultat.validation.errors == 0
 
     def test_aucun_appel_au_modele_n_est_necessaire(self, exemple, config):
         """The sample has to work with nothing else installed."""
         dossier, _ = exemple
-        assert run(dossier, config, "powerbi_2025", use_model=False).model_calls == 0
+        assert run(dossier, config, use_model=False).model_calls == 0
 
     def test_la_base_est_ecrite_et_relisible(self, exemple, config, tmp_path):
         dossier, resume = exemple
         entrepot = tmp_path / "base"
-        resultat = run(dossier, config, "powerbi_2025", use_model=False)
+        resultat = run(dossier, config, use_model=False)
         resume_ecriture = commit(resultat, config, entrepot)
 
         assert resume_ecriture["total"] == resume["ventes"]
-        assert (entrepot / "fact_ventes.parquet").exists()
+        # Une table par produit, pas un fichier unique.
+        tables = sorted(entrepot.glob("fact_*.parquet"))
+        assert len(tables) > 1, "un seul fichier : les produits n'ont pas été séparés"
         assert (entrepot / "dim_date.parquet").exists()
-        assert len(Warehouse(config, entrepot, "powerbi_2025").read_fact()) == resume["ventes"]
+        assert len(Warehouse(config, entrepot).read_fact()) == resume["ventes"]
 
     def test_les_deux_formes_de_prime_sont_representees(self, exemple, config):
         """One bank reports a breakdown, another only the global figure."""
         dossier, _ = exemple
-        frame = run(dossier, config, "powerbi_2025", use_model=False).frame
+        frame = run(dossier, config, use_model=False).frame
         assert frame["prime_totale"].notna().all()
         assert frame["banque"].nunique() >= 2
 
     def test_les_montants_ecrits_en_texte_sont_bien_lus(self, exemple, config):
         """One bank writes "1 234,56" rather than a number."""
         dossier, _ = exemple
-        frame = run(dossier, config, "powerbi_2025", use_model=False).frame
+        frame = run(dossier, config, use_model=False).frame
         assert pd.api.types.is_numeric_dtype(frame["prime_totale"])
         assert frame["prime_totale"].min() > 0
 
@@ -150,12 +192,19 @@ class TestLeParcoursDeDemonstration:
 class TestAffichageLisible:
     """Nothing on screen may be a machine value or an internal column name."""
 
+    PRODUIT = "sahti"
+
     def _frame(self):
         return pd.DataFrame({
-            "banque": ["BNA"], "mois_reception": ["2025-03"], "num_contrat": ["C-1"],
-            "nom_client": ["A B"], "date_effet": pd.to_datetime(["2025-07-16"]),
-            "produit": ["TD"], "agence": ["Tunis"], "prime_totale": [3519.42],
-            "capital_assure": [442988.76], "prime_totale_source": ["derived"],
+            "banque": ["CNEP"], "produit_code": ["sahti"],
+            "mois_reception": ["2025-03"], "num_contrat": ["C-1"],
+            "nom_client": ["A B"], "date_naissance": pd.to_datetime(["1980-01-01"]),
+            "agence": ["Alger Centre"], "date_effet": pd.to_datetime(["2025-07-16"]),
+            "date_fin": pd.to_datetime(["2026-07-15"]), "formule": ["Familiale"],
+            "nb_assures": [3], "capital_assure": [442988.76],
+            "periodicite": ["Mensuel"], "prime_totale": [3519.42],
+            "prime_totale_source": ["derived"], "commission_partenaire": [120.0],
+            "statut": ["En cours"],
             "source_file": ["x.xlsx"], "source_sheet": ["F"], "source_row": [7],
             "ingested_at": ["t"], "row_hash": ["h"],
         })
@@ -163,7 +212,7 @@ class TestAffichageLisible:
     def test_les_colonnes_techniques_sont_masquees(self, config):
         from composants import pour_affichage
 
-        colonnes = list(pour_affichage(self._frame(), config, "powerbi_2025").columns)
+        colonnes = list(pour_affichage(self._frame(), config, self.PRODUIT).columns)
         for interne in ("source_file", "row_hash", "ingested_at", "source_row"):
             assert interne not in colonnes
 
@@ -171,26 +220,26 @@ class TestAffichageLisible:
         from composants import pour_affichage
 
         colonnes = list(
-            pour_affichage(self._frame(), config, "powerbi_2025", technique=True).columns
+            pour_affichage(self._frame(), config, self.PRODUIT, technique=True).columns
         )
         assert "Fichier d'origine" in colonnes
 
     def test_les_dates_perdent_l_heure(self, config):
         from composants import pour_affichage
 
-        affiche = pour_affichage(self._frame(), config, "powerbi_2025")
+        affiche = pour_affichage(self._frame(), config, self.PRODUIT)
         assert affiche["Date d'effet"].iloc[0] == "16/07/2025"
 
     def test_les_valeurs_machine_deviennent_des_mots(self, config):
         from composants import pour_affichage
 
-        affiche = pour_affichage(self._frame(), config, "powerbi_2025")
+        affiche = pour_affichage(self._frame(), config, self.PRODUIT)
         assert affiche["Origine prime"].iloc[0] == "calculée"
 
     def test_aucun_nom_de_colonne_interne_ne_reste(self, config):
         from composants import pour_affichage
 
-        for colonne in pour_affichage(self._frame(), config, "powerbi_2025").columns:
+        for colonne in pour_affichage(self._frame(), config, self.PRODUIT).columns:
             assert "_" not in colonne, f"nom interne affiché : {colonne}"
 
 
@@ -226,3 +275,59 @@ class TestLancement:
         guide = (RACINE / "GUIDE.md").read_text(encoding="utf-8")
         assert "Lancer Cardif" in guide
         assert "Installer.bat" in guide
+
+
+class TestAffichageDesProduits:
+    """What a colleague reads on screen must never be an internal value."""
+
+    def _frame_produit(self):
+        return pd.DataFrame({
+            "banque": ["CNEP"], "produit_code": ["sahti"],
+            "mois_reception": ["2025-03"], "num_contrat": ["C-1"],
+            "nom_client": ["A B"], "date_naissance": [pd.NaT],
+            "agence": ["Alger Centre"], "date_effet": pd.to_datetime(["2025-07-16"]),
+            "date_fin": [pd.NaT], "formule": ["Familiale"], "nb_assures": [3],
+            "capital_assure": [442988.76], "periodicite": ["Mensuel"],
+            "prime_totale": [3519.42], "commission_partenaire": [120.0],
+            "statut": ["En cours"], "source_file": ["x.xlsx"], "source_sheet": ["F"],
+            "source_row": [7], "ingested_at": ["t"], "row_hash": ["h"],
+        })
+
+    def test_le_code_produit_devient_son_nom(self, config):
+        from composants import pour_affichage
+
+        affiche = pour_affichage(self._frame_produit(), config, "sahti")
+        assert affiche["Code produit"].iloc[0] == "SAHTI"
+
+    def test_une_case_vide_reste_vide(self, config):
+        """« None » à l'écran ressemble à une valeur ; ce n'en est pas une."""
+        from composants import pour_affichage
+
+        affiche = pour_affichage(self._frame_produit(), config, "sahti")
+        assert affiche["Date de fin"].iloc[0] == ""
+        assert "None" not in affiche.astype(str).to_string()
+
+    def test_chaque_produit_saffiche_avec_ses_propres_colonnes(self, config):
+        from composants import pour_affichage
+
+        colonnes = list(pour_affichage(self._frame_produit(), config, "sahti").columns)
+        assert "Nombre d'assurés" in colonnes
+        assert "Capital restant dû" not in colonnes
+
+
+class TestExempleMultiProduits:
+    def test_les_agences_sont_algeriennes(self, exemple):
+        """Le partenaire est algérien : des agences tunisiennes sèmeraient le doute."""
+        dossier, _ = exemple
+        classeur = load_workbook(sorted(dossier.rglob("*.xlsx"))[0], data_only=True)
+        feuille = classeur.active
+        textes = {
+            str(c.value) for ligne in feuille.iter_rows() for c in ligne
+            if isinstance(c.value, str)
+        }
+        assert not {"Tunis Centre", "Sfax Nord", "Sousse Medina"} & textes
+
+    def test_le_resume_annonce_les_produits(self, exemple):
+        _, resume = exemple
+        assert resume["produits"] > 1
+        assert resume["fichiers"] == resume["produits"] * 12 or resume["fichiers"] % 12 == 0

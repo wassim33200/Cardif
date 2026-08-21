@@ -16,7 +16,7 @@ from cardif.validate import (
 def frame(**overrides) -> pd.DataFrame:
     """A small, valid consolidated frame, before any defect is injected."""
     base = {
-        "banque": ["BNA", "BNA", "BNA"],
+        "banque": ["CNEP", "CNEP", "CNEP"],
         "mois_reception": ["2025-03", "2025-03", "2025-03"],
         "num_contrat": ["C-001", "C-002", "C-003"],
         "date_effet": pd.to_datetime(["2025-03-04", "2025-03-11", "2025-03-19"]),
@@ -25,7 +25,7 @@ def frame(**overrides) -> pd.DataFrame:
         "prime_totale": [1100.0, 2200.0, 1650.0],
         "prime_totale_source": ["reported"] * 3,
         "capital_assure": [50000.0, 80000.0, 60000.0],
-        "source_file": ["BNA 2025/mars.xlsx"] * 3,
+        "source_file": ["CNEP 2025/mars.xlsx"] * 3,
         "source_sheet": ["Feuil1"] * 3,
         "source_row": [5, 6, 7],
         "ingested_at": ["2025-04-01T09:00:00+00:00"] * 3,
@@ -36,13 +36,13 @@ def frame(**overrides) -> pd.DataFrame:
 
 
 def test_clean_frame_raises_nothing(config):
-    assert validate(frame(), config, "detaille").flags == []
+    assert validate(frame(), config, "ade_immobilier").flags == []
 
 
 class TestRequiredFields:
     def test_missing_required_value_is_an_error(self, config):
         bad = frame(prime_totale=[1100.0, None, 1650.0])
-        flags = check_required(bad, config, "detaille")
+        flags = check_required(bad, config, "ade_immobilier")
         assert len(flags) == 1
         assert flags[0].severity == "error"
         assert flags[0].field == "prime_totale"
@@ -125,7 +125,7 @@ class TestDuplicates:
     def test_same_contract_in_two_files_is_only_informational(self):
         # A renewal or a resent correction is legitimate; the user decides.
         across = frame(
-            source_file=["BNA 2025/mars.xlsx", "BNA 2025/avril.xlsx", "BNA 2025/mars.xlsx"],
+            source_file=["CNEP 2025/mars.xlsx", "CNEP 2025/avril.xlsx", "CNEP 2025/mars.xlsx"],
             num_contrat=["C-001", "C-001", "C-003"],
         )
         flags = [f for f in check_duplicates(across) if f.code == "duplicate_across_files"]
@@ -138,7 +138,7 @@ class TestReconciliationTable:
         table = reconciliation_table(frame())
         assert len(table) == 1
         row = table.iloc[0]
-        assert row["banque"] == "BNA"
+        assert row["banque"] == "CNEP"
         assert row["mois_reception"] == "2025-03"
         assert row["lignes"] == 3
         assert row["prime_totale_total"] == pytest.approx(4950.0)
@@ -151,6 +151,6 @@ class TestReconciliationTable:
 def test_flagged_rows_are_never_removed(config):
     """The contract the whole design rests on: flags mark, they do not delete."""
     bad = frame(prime_totale=[1100.0, 9999.0, None])
-    report = validate(bad, config, "detaille")
+    report = validate(bad, config, "ade_immobilier")
     assert report.errors > 0
     assert len(bad) == 3

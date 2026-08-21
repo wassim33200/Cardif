@@ -187,10 +187,10 @@ def identifiers_mangled_by_excel(path: Path) -> None:
 
 def build_all(root: Path) -> dict[str, Path]:
     """Write every hostile case into a bank folder. Returns name -> path."""
-    folder = root / "BNA 2025"
+    folder = root / "CNEP 2025"
     folder.mkdir(parents=True, exist_ok=True)
 
-    good = folder / "Ventes_Janvier_2025.xlsx"
+    good = folder / "ADE_Immobilier_Janvier_2025.xlsx"
     valid_baseline(good, month=1)
 
     cases: dict[str, Path] = {"valid_baseline": good}
@@ -200,15 +200,15 @@ def build_all(root: Path) -> dict[str, Path]:
         builder(path, *args)
         cases[name] = path
 
-    add("not_a_workbook", "Ventes_Fevrier_2025.xlsx", not_a_workbook)
-    add("zero_bytes", "Ventes_Mars_2025.xlsx", zero_bytes)
-    add("csv_with_xlsx_extension", "Ventes_Avril_2025.xlsx", csv_with_xlsx_extension)
-    add("truncated_zip", "Ventes_Mai_2025.xlsx", truncated_zip, good)
-    add("empty_workbook", "Ventes_Juin_2025.xlsx", empty_workbook)
-    add("header_but_no_data", "Ventes_Juillet_2025.xlsx", header_but_no_data)
-    add("only_scratch_numbers", "Ventes_Aout_2025.xlsx", only_scratch_numbers)
-    add("blank_rows_only", "Ventes_Septembre_2025.xlsx", blank_rows_only)
-    add("uncached_formulas", "Ventes_Octobre_2025.xlsx", uncached_formulas)
-    add("table_offset_from_origin", "Ventes_Novembre_2025.xlsx", table_offset_from_origin)
-    add("colliding_headers", "Ventes_Decembre_2025.xlsx", colliding_headers)
+    add("not_a_workbook", "ADE_Immobilier_Fevrier_2025.xlsx", not_a_workbook)
+    add("zero_bytes", "ADE_Immobilier_Mars_2025.xlsx", zero_bytes)
+    add("csv_with_xlsx_extension", "ADE_Immobilier_Avril_2025.xlsx", csv_with_xlsx_extension)
+    add("truncated_zip", "ADE_Immobilier_Mai_2025.xlsx", truncated_zip, good)
+    add("empty_workbook", "ADE_Immobilier_Juin_2025.xlsx", empty_workbook)
+    add("header_but_no_data", "ADE_Immobilier_Juillet_2025.xlsx", header_but_no_data)
+    add("only_scratch_numbers", "ADE_Immobilier_Aout_2025.xlsx", only_scratch_numbers)
+    add("blank_rows_only", "ADE_Immobilier_Septembre_2025.xlsx", blank_rows_only)
+    add("uncached_formulas", "ADE_Immobilier_Octobre_2025.xlsx", uncached_formulas)
+    add("table_offset_from_origin", "ADE_Immobilier_Novembre_2025.xlsx", table_offset_from_origin)
+    add("colliding_headers", "ADE_Immobilier_Decembre_2025.xlsx", colliding_headers)
     return cases

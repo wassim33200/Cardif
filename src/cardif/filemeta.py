@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import Banks
+from .config import Banks, Schema
 from .normalize import normalize_header
 
 # Accent-folded month stems, longest first so "juillet" is not eaten by "jui".
@@ -66,6 +66,9 @@ class FileMeta:
     month: int | None = None
     period_method: str = "unresolved"
     period_confidence: float = 0.0
+    produit: str | None = None
+    produit_label: str | None = None
+    produit_method: str = "unresolved"
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -77,12 +80,17 @@ class FileMeta:
 
     @property
     def resolved(self) -> bool:
-        return self.bank_code is not None and self.period is not None
+        return (
+            self.bank_code is not None
+            and self.period is not None
+            and self.produit is not None
+        )
 
     def describe(self) -> str:
         bank = self.bank_code or "?"
         period = self.period or "?"
-        return f"{self.path.name}: {bank} / {period} ({self.period_method})"
+        produit = self.produit or "?"
+        return f"{self.path.name}: {bank} / {produit} / {period}"
 
 
 def resolve_bank(folder_name: str, banks: Banks) -> tuple[str | None, str | None, str]:
@@ -182,7 +190,58 @@ def year_from_folder(folder_name: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def read_meta(path: Path, banks: Banks) -> FileMeta:
+def resolve_produit(
+    path: Path, schema: Schema, banque: str | None = None
+) -> tuple[str | None, str | None, str]:
+    """Work out which product a file holds, from its name and its folders.
+
+    Each bank sends one file per product, and names it after the product: the words
+    "ADE immobilier", "SAHTI", "CTP", "Visa" appear in the filename or in a sub-folder.
+    Matching is done on the longest product keyword first, so "ade immobilier" is not
+    shadowed by a shorter "ade", and only against products the bank actually
+    distributes, which removes most of the ambiguity for free.
+
+    Returns ``(code, label, method)``.
+    """
+    # The filename plus every folder above it, so "CNEP 2025/SAHTI/mars.xlsx" works
+    # as well as "CNEP 2025/SAHTI_mars_2025.xlsx".
+    parties = [path.stem, *(parent.name for parent in path.parents)]
+    texte = normalize_header(" ".join(parties))
+    if not texte:
+        return None, None, "unresolved"
+
+    candidats = schema.produits_du_partenaire(banque)
+    motifs: list[tuple[str, str]] = []
+    for code in candidats:
+        produit = schema.profiles[code]
+        for motif in produit.match:
+            if motif:
+                motifs.append((motif, code))
+    # Longest keyword wins: "ade immobilier" must beat "ade".
+    motifs.sort(key=lambda item: len(item[0]), reverse=True)
+
+    trouves: list[tuple[str, str]] = []
+    for motif, code in motifs:
+        if re.search(rf"(?<!\w){re.escape(motif)}(?!\w)", texte):
+            trouves.append((motif, code))
+
+    if not trouves:
+        return None, None, "unresolved"
+
+    meilleur_motif, meilleur_code = trouves[0]
+    # Two different products matched with keywords of the same length: genuinely
+    # ambiguous, so hand it over rather than pick one.
+    concurrents = {
+        code for motif, code in trouves
+        if len(motif) == len(meilleur_motif) and code != meilleur_code
+    }
+    if concurrents:
+        return None, None, "ambiguous"
+
+    return meilleur_code, schema.profiles[meilleur_code].label, "nom_fichier"
+
+
+def read_meta(path: Path, banks: Banks, schema: Schema | None = None) -> FileMeta:
     """Resolve bank and period for a single workbook path."""
     folder = path.parent.name
     code, label, bank_method = resolve_bank(folder, banks)
@@ -199,6 +258,24 @@ def read_meta(path: Path, banks: Banks) -> FileMeta:
         period_method=method,
         period_confidence=confidence,
     )
+
+    if schema is not None:
+        produit, produit_label, produit_method = resolve_produit(path, schema, code)
+        meta.produit = produit
+        meta.produit_label = produit_label
+        meta.produit_method = produit_method
+        if produit is None:
+            if produit_method == "ambiguous":
+                meta.notes.append(
+                    "Plusieurs produits correspondent au nom de ce fichier ; "
+                    "précisez lequel."
+                )
+            else:
+                meta.notes.append(
+                    "Aucun produit reconnu dans le nom du fichier. Ajoutez le nom du "
+                    "produit au nom du fichier (par exemple « SAHTI_Mars_2025.xlsx ») "
+                    "ou rangez-le dans un sous-dossier portant ce nom."
+                )
     if code is None:
         meta.notes.append(
             f"Le dossier « {folder} » ne correspond à aucune banque enregistrée."
@@ -228,7 +305,7 @@ def read_meta(path: Path, banks: Banks) -> FileMeta:
 WORKBOOK_SUFFIXES = {".xlsx", ".xlsm", ".xls"}
 
 
-def scan(root: Path, banks: Banks) -> list[FileMeta]:
+def scan(root: Path, banks: Banks, schema: Schema | None = None) -> list[FileMeta]:
     """Walk a data root and resolve every workbook found.
 
     Reads only paths, never file contents, so this is instant even on a full year of
@@ -242,7 +319,7 @@ def scan(root: Path, banks: Banks) -> list[FileMeta]:
             continue
         if path.suffix.lower() not in WORKBOOK_SUFFIXES:
             continue
-        meta = read_meta(path, banks)
+        meta = read_meta(path, banks, schema)
         if path.suffix.lower() == ".xls":
             meta.notes.append(
                 "Ancien format .xls : enregistrez ce fichier au format .xlsx depuis "

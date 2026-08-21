@@ -28,20 +28,21 @@ st.set_page_config(page_title="Fichiers", page_icon="📁", layout="wide")
 st.title("1 · Vérifier les fichiers")
 etapes(1)
 st.caption(
-    "L'outil lit le nom de chaque dossier pour savoir de quelle banque il s'agit, "
-    "et le nom de chaque fichier pour savoir de quel mois. Rien n'est encore ouvert."
+    "L'outil lit le nom du dossier pour la banque, et le nom du fichier pour le "
+    "produit et le mois. Chaque produit a ses propres colonnes : c'est lui qui "
+    "détermine le format attendu. Rien n'est encore ouvert à ce stade."
 )
 
 state = st.session_state
 root = exiger_un_dossier()
 
 config = load_config(state.get("config_dir", "config"))
-metas = scan(Path(root), config.banks)
+metas = scan(Path(root), config.banks, config.schema_)
 if not metas:
     st.error("Aucun fichier Excel trouvé dans ce dossier.")
     st.stop()
 
-warehouse = Warehouse(config, state.get("warehouse_dir", "warehouse"), state.get("profile"))
+warehouse = Warehouse(config, state.get("warehouse_dir", "warehouse"))
 try:
     status = {str(m.path): warehouse.manifest.status(m.path) for m in metas}
 except WarehouseCorrupt as exc:
@@ -54,6 +55,7 @@ rows = [{
     "fichier": m.path.name,
     "dossier": m.path.parent.name,
     "banque": m.bank_code or "—",
+    "produit": m.produit_label or "—",
     "mois": m.period or "—",
     "détecté par": {
         "numeric": "motif numérique", "month_name": "nom de mois",
@@ -67,14 +69,16 @@ frame = pd.DataFrame(rows)
 unresolved = [m for m in metas if not m.resolved]
 new_or_changed = [m for m in metas if status[str(m.path)] != "unchanged"]
 
-a, b, c = st.columns(3)
+produits_vus = {m.produit for m in metas if m.produit}
+a, b, c, d = st.columns(4)
 a.metric("Fichiers trouvés", len(metas))
-b.metric("Nouveaux à traiter", len(new_or_changed))
-c.metric("Problèmes", len(unresolved))
+b.metric("Produits détectés", len(produits_vus))
+c.metric("Nouveaux à traiter", len(new_or_changed))
+d.metric("Problèmes", len(unresolved))
 
 if not unresolved:
     st.success(
-        "Chaque fichier est bien rattaché à une banque et à un mois. "
+        "Chaque fichier est bien rattaché à une banque, à un produit et à un mois. "
         "Vous pouvez passer à l'étape suivante."
     )
     st.page_link("pages/2_Colonnes.py", label="Étape 2 · Colonnes ▶", icon="🔤")
@@ -85,10 +89,11 @@ with st.expander("Voir le détail des fichiers", expanded=bool(unresolved)):
 if unresolved:
     st.subheader(f"{len(unresolved)} fichier·s à corriger")
     st.warning(
-        "Pour ces fichiers, le nom ne permet pas de savoir de quelle banque ou de "
-        "quel mois il s'agit. **Le plus simple est de renommer le fichier** en y "
-        "mettant le mois, par exemple « Ventes_Mars_2025.xlsx », puis de recharger "
-        "cette page. Sinon, indiquez-le à la main ci-dessous."
+        "Pour ces fichiers, le nom ne permet pas de savoir de quelle banque, de quel "
+        "produit ou de quel mois il s'agit. **Le plus simple est de renommer le "
+        "fichier** en y mettant le produit et le mois, par exemple "
+        "« ADE_Immobilier_Mars_2025.xlsx » ou « SAHTI_Mars_2025.xlsx », puis de "
+        "recharger cette page. Sinon, indiquez-le à la main ci-dessous."
     )
 
     if state.get("use_model") and st.button("Demander à l'assistant de deviner le mois"):
@@ -126,9 +131,22 @@ if unresolved:
                 "Mois (AAAA-MM)", suggested, key=f"period_{meta.path}",
                 placeholder="2025-03",
             )
-            if chosen != "—" and period:
+            produits = ["—"] + config.schema_.produits_du_partenaire(
+                chosen if chosen != "—" else None
+            )
+            actuel = meta.produit or "—"
+            produit = st.selectbox(
+                "Produit", produits,
+                index=produits.index(actuel) if actuel in produits else 0,
+                key=f"produit_{meta.path}",
+                format_func=lambda code: (
+                    code if code == "—" else config.produit(code).label
+                ),
+                help="Le produit détermine les colonnes attendues dans le fichier.",
+            )
+            if chosen != "—" and period and produit != "—":
                 state.setdefault("file_overrides", {})[str(meta.path)] = {
-                    "bank": chosen, "period": period,
+                    "bank": chosen, "period": period, "produit": produit,
                 }
     st.caption(
         "Ces corrections valent pour cette session. Pour qu'elles tiennent d'un mois "

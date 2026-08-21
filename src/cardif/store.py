@@ -32,8 +32,12 @@ from collections.abc import Callable
 
 from .config import Config
 
-FACT_NAME = "fact_ventes"
 MANIFEST_NAME = "_manifest.json"
+
+
+def nom_table(produit: str) -> str:
+    """Table file name for a product: ``ade_immobilier`` -> ``fact_ade_immobilier``."""
+    return f"fact_{produit}"
 
 
 class WarehouseCorrupt(RuntimeError):
@@ -59,6 +63,7 @@ class IngestedFile:
     rows: int
     ingested_at: str
     profile: str
+    produit: str = ""
 
     @classmethod
     def from_frame(cls, path: Path, frame: pd.DataFrame, profile: str) -> "IngestedFile":
@@ -70,6 +75,7 @@ class IngestedFile:
             rows=len(frame),
             ingested_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
             profile=profile,
+            produit=profile,
         )
 
 
@@ -78,7 +84,8 @@ class Manifest:
     """What the warehouse already contains."""
 
     files: dict[str, IngestedFile] = field(default_factory=dict)
-    schema_columns: list[str] = field(default_factory=list)
+    # Column list per product: each product has its own table and its own contract.
+    schema_columns: dict[str, list[str]] = field(default_factory=dict)
     profile: str = ""
 
     @classmethod
@@ -86,9 +93,13 @@ class Manifest:
         if not path.exists():
             return cls()
         raw = json.loads(path.read_text(encoding="utf-8"))
+        colonnes = raw.get("schema_columns", {})
+        if isinstance(colonnes, list):
+            # Warehouses written before products existed stored one flat list.
+            colonnes = {raw.get("profile", "generique"): colonnes} if colonnes else {}
         return cls(
             files={k: IngestedFile(**v) for k, v in raw.get("files", {}).items()},
-            schema_columns=raw.get("schema_columns", []),
+            schema_columns=colonnes,
             profile=raw.get("profile", ""),
         )
 
@@ -180,40 +191,59 @@ class Warehouse:
 
     # -- paths -------------------------------------------------------------------
 
-    @property
-    def fact_path(self) -> Path:
-        return self.root / f"{FACT_NAME}.parquet"
+    def fact_path(self, produit: str) -> Path:
+        """Each product gets its own table: their columns have little in common."""
+        return self.root / f"{nom_table(produit)}.parquet"
 
-    def bank_path(self, bank: str, suffix: str = "parquet") -> Path:
-        return self.root / "par_banque" / f"{bank}.{suffix}"
+    def produits_presents(self) -> list[str]:
+        """Products that already have a table in the warehouse."""
+        return sorted(
+            p.stem[len("fact_"):] for p in self.root.glob("fact_*.parquet")
+        )
+
+    def bank_path(self, bank: str, produit: str, suffix: str = "parquet") -> Path:
+        return self.root / "par_banque" / f"{bank}_{produit}.{suffix}"
 
     # -- reading -----------------------------------------------------------------
 
-    def read_fact(self) -> pd.DataFrame:
-        """Read the fact table, falling back to the backup if the current file is broken."""
-        if not self.fact_path.exists():
+    def read_fact(self, produit: str | None = None) -> pd.DataFrame:
+        """Read one product's table, or all of them stacked together.
+
+        Reading everything at once is only for counting and reporting: the tables have
+        different columns, so the union is sparse by nature and is never written to disk.
+        """
+        if produit is None:
+            morceaux = [self.read_fact(code) for code in self.produits_presents()]
+            morceaux = [m for m in morceaux if not m.empty]
+            if not morceaux:
+                return pd.DataFrame()
+            return pd.concat(morceaux, ignore_index=True)
+
+        chemin = self.fact_path(produit)
+        if not chemin.exists():
             return pd.DataFrame()
         try:
-            return pd.read_parquet(self.fact_path)
+            return pd.read_parquet(chemin)
         except Exception as exc:                  # noqa: BLE001 - re-raised with context
-            backup = self.fact_path.with_suffix(self.fact_path.suffix + ".bak")
+            backup = chemin.with_suffix(chemin.suffix + ".bak")
             if backup.exists():
                 try:
                     frame = pd.read_parquet(backup)
                 except Exception:
                     raise WarehouseCorrupt(
-                        f"{self.fact_path} is unreadable ({exc}) and so is its backup. "
-                        "Re-ingest the source files to rebuild the warehouse."
+                        f"Le fichier {chemin} est illisible ({exc}) et sa sauvegarde "
+                        "aussi. Retraitez les fichiers sources pour reconstruire la base."
                     ) from exc
                 raise WarehouseCorrupt(
-                    f"{self.fact_path} is unreadable ({exc}), probably from an "
-                    f"interrupted write. A backup holding {len(frame)} rows is available "
-                    f"at {backup}: rename it over the main file to recover, then "
-                    "re-ingest anything committed since."
+                    f"Le fichier {chemin} est illisible ({exc}), probablement à cause "
+                    f"d'un enregistrement interrompu. Une sauvegarde contenant "
+                    f"{len(frame)} lignes existe : {backup}. Renommez-la par-dessus le "
+                    "fichier principal pour récupérer, puis retraitez ce qui a été "
+                    "ajouté depuis."
                 ) from exc
             raise WarehouseCorrupt(
-                f"{self.fact_path} is unreadable ({exc}) and there is no backup. "
-                "Re-ingest the source files to rebuild the warehouse."
+                f"Le fichier {chemin} est illisible ({exc}) et il n'y a pas de "
+                "sauvegarde. Retraitez les fichiers sources pour reconstruire la base."
             ) from exc
 
     def pending(self, paths: list[Path]) -> dict[str, list[Path]]:
@@ -225,11 +255,11 @@ class Warehouse:
 
     # -- the schema contract ------------------------------------------------------
 
-    def expected_columns(self) -> list[str]:
-        """The column list the profile implies, including derived source markers."""
+    def expected_columns(self, produit: str) -> list[str]:
+        """The column list a product implies, including derived source markers."""
         from .consolidate import PROVENANCE_COLUMNS
 
-        profile = self.config.schema_.profiles[self.profile_name]
+        profile = self.config.produit(produit)
         columns = list(profile.columns)
         for name in profile.columns:
             field_def = self.config.schema_.fields.get(name)
@@ -237,9 +267,13 @@ class Warehouse:
                 columns.append(f"{name}_source")
         return columns + PROVENANCE_COLUMNS
 
-    def check_contract(self, frame: pd.DataFrame) -> None:
-        """Refuse a write whose shape differs from what the warehouse already holds."""
-        expected = self.manifest.schema_columns or self.expected_columns()
+    def check_contract(self, frame: pd.DataFrame, produit: str) -> None:
+        """Refuse a write whose shape differs from what that product's table holds.
+
+        The contract is per product: adding a column to the ADE table must not be
+        blocked by, or silently alter, the SAHTI table.
+        """
+        expected = self.manifest.schema_columns.get(produit) or self.expected_columns(produit)
         actual = list(frame.columns)
         if actual == expected:
             return
@@ -248,94 +282,114 @@ class Warehouse:
         extra = [c for c in actual if c not in expected]
         details = []
         if missing:
-            details.append(f"missing columns {missing}")
+            details.append(f"colonnes manquantes {missing}")
         if extra:
-            details.append(f"unexpected columns {extra}")
+            details.append(f"colonnes en trop {extra}")
         if not details:
-            details.append(f"column order changed: expected {expected}, got {actual}")
+            details.append(f"ordre des colonnes modifié : attendu {expected}, reçu {actual}")
         raise SchemaContractError(
-            "refusing to write: the fact table's shape would change ("
-            + "; ".join(details)
-            + "). Every Power BI report built on this table depends on these columns. "
-            "If the change is intended, update the export profile in schema.yaml and "
-            "rebuild the warehouse deliberately."
+            f"Écriture refusée : la forme de la table « {produit} » changerait ("
+            + " ; ".join(details)
+            + "). Chaque rapport Power BI construit sur cette table dépend de ces "
+            "colonnes. Si le changement est voulu, modifiez le produit dans "
+            "produits.yaml et reconstruisez la table volontairement."
         )
 
     # -- writing -----------------------------------------------------------------
 
     def append(
-        self, frames: list[pd.DataFrame], sources: list[Path], dry_run: bool = False
+        self,
+        frames: list[pd.DataFrame],
+        sources: list[Path],
+        produits: list[str] | None = None,
+        dry_run: bool = False,
     ) -> dict:
-        """Add or replace the rows belonging to the given source files.
+        """Add or replace rows, writing one table per product.
 
-        Rows are keyed by ``row_hash``. Any row previously ingested from one of these
-        source files is dropped first, so re-ingesting a corrected file replaces its
-        rows instead of duplicating them.
+        Frames are grouped by product first: a month typically brings an ADE file and a
+        SAHTI file, and they belong in different tables with different columns. Each
+        table is written atomically and checked against its own contract, so a problem
+        with one product cannot corrupt another.
         """
         if not frames:
-            return {"written": 0, "replaced": 0, "total": len(self.read_fact())}
+            return {"written": 0, "replaced": 0, "total": 0, "par_produit": {}}
 
-        incoming = pd.concat(frames, ignore_index=True)
-        self.check_contract(incoming)
+        produits = produits or [self.profile_name] * len(frames)
+        groupes: dict[str, list[tuple[pd.DataFrame, Path]]] = {}
+        for frame, source, produit in zip(frames, sources, produits):
+            groupes.setdefault(produit, []).append((frame, source))
 
-        existing = self.read_fact()
-        replaced = 0
-        if not existing.empty:
-            touched = {str(p) for p in sources}
-            before = len(existing)
-            existing = existing[~existing["source_file"].isin(touched)]
-            replaced = before - len(existing)
-            combined = pd.concat([existing, incoming], ignore_index=True)
-        else:
-            combined = incoming
+        resume = {"written": 0, "replaced": 0, "total": 0, "par_produit": {}}
+        self.skipped_xlsx = []
 
-        # row_hash already includes the source file, so this only removes true repeats.
-        combined = combined.drop_duplicates(subset="row_hash", keep="last")
-        combined = combined.sort_values(
-            ["banque", "mois_reception", "source_file", "source_row"]
-        ).reset_index(drop=True)
+        for produit, elements in sorted(groupes.items()):
+            entrant = pd.concat([f for f, _ in elements], ignore_index=True)
+            chemins = [p for _, p in elements]
+            self.check_contract(entrant, produit)
 
-        summary = {
-            "written": len(incoming),
-            "replaced": replaced,
-            "total": len(combined),
-        }
+            existant = self.read_fact(produit)
+            remplaces = 0
+            if not existant.empty:
+                touches = {str(p) for p in chemins}
+                avant = len(existant)
+                existant = existant[~existant["source_file"].isin(touches)]
+                remplaces = avant - len(existant)
+                combine = pd.concat([existant, entrant], ignore_index=True)
+            else:
+                combine = entrant
+
+            # row_hash already includes the source file, so this removes true repeats only.
+            combine = combine.drop_duplicates(subset="row_hash", keep="last")
+            combine = combine.sort_values(
+                ["banque", "mois_reception", "source_file", "source_row"]
+            ).reset_index(drop=True)
+
+            resume["written"] += len(entrant)
+            resume["replaced"] += remplaces
+            resume["total"] += len(combine)
+            resume["par_produit"][produit] = {
+                "ecrites": len(entrant),
+                "remplacees": remplaces,
+                "total": len(combine),
+            }
+
+            if dry_run:
+                continue
+
+            self.root.mkdir(parents=True, exist_ok=True)
+            chemin = self.fact_path(produit)
+            atomic_write(chemin, lambda cible, c=combine: c.to_parquet(cible, index=False))
+
+            # Read back before recording the files as ingested. If the write silently
+            # produced something unusable, the manifest must not claim otherwise.
+            verifie = pd.read_parquet(chemin)
+            if len(verifie) != len(combine):
+                raise WarehouseCorrupt(
+                    f"{len(combine)} lignes écrites pour « {produit} » mais "
+                    f"{len(verifie)} relues. La table n'a pas été mise à jour ; "
+                    "la version précédente est intacte."
+                )
+
+            for source, (frame, _) in zip(chemins, elements):
+                self.manifest.files[str(source)] = IngestedFile.from_frame(
+                    source, frame, produit
+                )
+            self.manifest.schema_columns[produit] = list(combine.columns)
+            self._write_bank_extracts(combine, produit)
+
         if dry_run:
-            return summary
+            return resume
 
-        self.root.mkdir(parents=True, exist_ok=True)
-        atomic_write(
-            self.fact_path, lambda target: combined.to_parquet(target, index=False)
-        )
-
-        # Read back before recording the files as ingested. If the write silently
-        # produced something unusable, the manifest must not claim otherwise -- a
-        # re-run would then skip the very files that are missing.
-        verified = pd.read_parquet(self.fact_path)
-        if len(verified) != len(combined):
-            raise WarehouseCorrupt(
-                f"wrote {len(combined)} rows but read back {len(verified)}. "
-                "The warehouse has not been updated; the previous version is intact."
-            )
-
-        for path, frame in zip(sources, frames):
-            self.manifest.files[str(path)] = IngestedFile.from_frame(
-                path, frame, self.profile_name
-            )
-        self.manifest.schema_columns = list(combined.columns)
         self.manifest.profile = self.profile_name
         self.manifest.save(self.root / MANIFEST_NAME)
-
-        self._write_dimensions(combined)
-        touched = set(incoming["banque"].dropna().unique()) if "banque" in incoming else None
-        self._write_bank_extracts(combined, touched)
+        self._write_dimensions(self.read_fact())
         if self.skipped_xlsx:
-            summary["skipped_xlsx"] = list(self.skipped_xlsx)
-        return summary
+            resume["skipped_xlsx"] = list(self.skipped_xlsx)
+        return resume
 
     # -- dimensions and extracts --------------------------------------------------
 
-    def _write_bank_extracts(self, fact: pd.DataFrame, banks: set[str] | None = None) -> None:
+    def _write_bank_extracts(self, fact: pd.DataFrame, produit: str) -> None:
         """One file per bank, as requested, alongside the combined table.
 
         Point Power BI at the combined table and filter on `banque`: a single model
@@ -347,29 +401,23 @@ class Warehouse:
         directory.mkdir(parents=True, exist_ok=True)
         limit = self.config.settings.warehouse.xlsx_row_limit
 
-        self.skipped_xlsx = []
         for bank, group in fact.groupby("banque"):
-            # Each extract holds that bank's whole history, so rewriting all of them on
-            # every commit means re-serialising years of data to add one month. A
-            # monthly run touches one bank; only that bank's extract needs rebuilding.
-            if banks is not None and bank not in banks:
-                continue
             group = group.reset_index(drop=True)
-            group.to_parquet(self.bank_path(bank), index=False)
+            group.to_parquet(self.bank_path(bank, produit), index=False)
             if not self.config.settings.warehouse.write_xlsx:
                 continue
             if len(group) > limit:
                 # Truncating silently would be far worse than not writing at all, but
                 # saying nothing would leave a stale extract looking current.
                 self.skipped_xlsx.append(
-                    f"{bank}: {len(group)} rows exceeds the Excel limit of {limit}; "
-                    "the .parquet extract holds the full data"
+                    f"{bank} / {produit} : {len(group)} lignes dépassent la limite "
+                    f"Excel de {limit} ; le fichier .parquet contient tout."
                 )
-                self.bank_path(bank, "xlsx").unlink(missing_ok=True)
+                self.bank_path(bank, produit, "xlsx").unlink(missing_ok=True)
                 continue
-            labels = self.config.schema_.label_map(self.profile_name)
+            labels = self.config.schema_.label_map(produit)
             group.rename(columns=labels).to_excel(
-                self.bank_path(bank, "xlsx"), index=False, sheet_name="Ventes"
+                self.bank_path(bank, produit, "xlsx"), index=False, sheet_name="Ventes"
             )
 
     def _write_dimensions(self, fact: pd.DataFrame) -> None:
@@ -385,11 +433,18 @@ class Warehouse:
                 "libelle_banque": [labels.get(c, c) for c in codes],
             }).to_parquet(self.root / "dim_banque.parquet", index=False)
 
-        if "produit" in fact.columns:
-            produits = sorted(fact["produit"].dropna().unique())
-            pd.DataFrame({"produit": produits}).to_parquet(
-                self.root / "dim_produit.parquet", index=False
-            )
+        # The product dimension comes from the catalogue, not only from what happens to
+        # be in the data, so a Power BI slicer lists every product from day one.
+        lignes = [
+            {
+                "produit_code": code,
+                "produit": profil.label,
+                "famille": profil.famille,
+                "table": nom_table(code),
+            }
+            for code, profil in sorted(self.config.schema_.profiles.items())
+        ]
+        pd.DataFrame(lignes).to_parquet(self.root / "dim_produit.parquet", index=False)
 
 
 MOIS_FR = [

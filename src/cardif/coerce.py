@@ -26,7 +26,7 @@ from .normalize import clean_spaces, is_blank, strip_accents
 # so serials at or above 60 are shifted by one day relative to a naive calculation.
 _EXCEL_EPOCH = dt.date(1899, 12, 30)
 
-_CURRENCY = re.compile(r"[€$£]|\b(dt|tnd|eur|usd|dh|mad|dzd)\b", re.IGNORECASE)
+_CURRENCY = re.compile(r"[€$£%]|\b(da|dzd|dt|tnd|eur|usd|dh|mad)\b", re.IGNORECASE)
 _NON_NUMERIC = re.compile(r"[^\d.,\-+]")
 
 _FRENCH_MONTH_NAMES = {
@@ -78,6 +78,8 @@ class ColumnReport:
     blank: int = 0
     failed: int = 0
     decimal_separator: str | None = None
+    # Set for percent columns: whether the values were divided by 100.
+    percent_rescaled: bool | None = None
     failures: list[str] = field(default_factory=list)
 
     @property
@@ -279,6 +281,26 @@ def to_integer(value: object, decimal_separator: str = ",") -> int | None:
     return int(round(number))
 
 
+def column_is_percentage(values: list) -> bool:
+    """Whether a rate column is written as percentages rather than as plain rates.
+
+    A column holding "0,45 %" means the same thing as one holding "0,0045", and mixing
+    the two interpretations inside one column is how a premium rate ends up a hundred
+    times too big. The decision is taken once for the whole column, by majority, exactly
+    like the decimal separator: a uniform reading keeps an error visible instead of
+    scattering it row by row.
+    """
+    with_sign = 0
+    seen = 0
+    for value in values:
+        if is_blank(value):
+            continue
+        seen += 1
+        if isinstance(value, str) and "%" in value:
+            with_sign += 1
+    return seen > 0 and with_sign >= seen / 2
+
+
 def coerce_column(
     values: list, target_type: str, header: str = ""
 ) -> tuple[list, ColumnReport]:
@@ -288,8 +310,10 @@ def coerce_column(
     """
     report = ColumnReport(header=header, target_type=target_type, total=len(values))
 
-    if target_type in {"money", "integer"}:
+    if target_type in {"money", "integer", "percent"}:
         report.decimal_separator = detect_decimal_separator(values)
+    if target_type == "percent":
+        report.percent_rescaled = column_is_percentage(values)
 
     out = []
     for value in values:
@@ -300,6 +324,10 @@ def coerce_column(
 
         if target_type == "money":
             result = to_number(value, report.decimal_separator)
+        elif target_type == "percent":
+            result = to_number(value, report.decimal_separator)
+            if result is not None and report.percent_rescaled:
+                result = result / 100.0
         elif target_type == "integer":
             result = to_integer(value, report.decimal_separator)
         elif target_type == "date":

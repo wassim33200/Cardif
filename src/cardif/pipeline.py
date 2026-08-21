@@ -44,6 +44,17 @@ class RunResult:
     def n_rows(self) -> int:
         return 0 if self.frame is None else len(self.frame)
 
+    def produits_rencontres(self) -> Counter:
+        """How many files were seen for each product, for the interface and the audit."""
+        compte: Counter = Counter()
+        for resultat in self.ok_results:
+            compte[resultat.produit] += 1
+        return compte
+
+    def produits_non_identifies(self) -> list[FileResult]:
+        """Files whose product could not be read from the path."""
+        return [r for r in self.results if r.meta.produit is None]
+
     def unresolved_headers(self) -> Counter:
         """Headers still needing a human, counted across files."""
         counter: Counter = Counter()
@@ -106,15 +117,16 @@ def run(
     overrides: dict[str, str] | None = None,
 ) -> RunResult:
     """Process every workbook under ``root`` (or just ``only``) into one frame."""
-    profile_name = profile_name or config.settings.warehouse.profile
+    # No single profile any more: each file's product decides its own shape. The value
+    # here is only a forced override, used by tests and by the "reprocess as" action.
     mapper, model = build_mapper(config, use_model)
 
-    metas: list[FileMeta] = scan(Path(root), config.banks)
+    metas: list[FileMeta] = scan(Path(root), config.banks, config.schema_)
     if only is not None:
         wanted = {str(p) for p in only}
         metas = [m for m in metas if str(m.path) in wanted]
 
-    outcome = RunResult(profile_name=profile_name)
+    outcome = RunResult(profile_name=profile_name or config.settings.warehouse.profile)
     frames = []
     for meta in metas:
         result = process_file(meta, config, mapper, profile_name, overrides)
@@ -126,7 +138,14 @@ def run(
 
     if frames:
         outcome.frame = pd.concat(frames, ignore_index=True)
-        outcome.validation = validate(outcome.frame, config, profile_name)
+        # Required fields differ per product, so each product's rows are checked
+        # against their own rules and the findings are pooled.
+        par_produit: dict[str, list[pd.DataFrame]] = {}
+        for resultat in outcome.ok_results:
+            par_produit.setdefault(resultat.produit, []).append(resultat.frame)
+        for produit, morceaux in par_produit.items():
+            rapport = validate(pd.concat(morceaux, ignore_index=True), config, produit)
+            outcome.validation.extend(rapport.flags)
     if model is not None:
         outcome.model_calls = model.calls
     return outcome
@@ -135,11 +154,12 @@ def run(
 def commit(
     outcome: RunResult, config: Config, root: Path | str | None = None, dry_run: bool = False
 ) -> dict:
-    """Write a run's frames into the warehouse, appending rather than rebuilding."""
+    """Write a run's frames into the warehouse, one table per product."""
     warehouse = Warehouse(config, root, outcome.profile_name or None)
     frames = [r.frame for r in outcome.ok_results]
     sources = [Path(r.meta.path) for r in outcome.ok_results]
-    return warehouse.append(frames, sources, dry_run=dry_run)
+    produits = [r.produit for r in outcome.ok_results]
+    return warehouse.append(frames, sources, produits, dry_run=dry_run)
 
 
 def profile_headers(root: Path | str, config: Config) -> pd.DataFrame:
@@ -156,7 +176,7 @@ def profile_headers(root: Path | str, config: Config) -> pd.DataFrame:
     vocabulary = set(mapper.seed) | set(config.aliases.global_)
 
     seen: dict[str, dict] = {}
-    for meta in scan(Path(root), config.banks):
+    for meta in scan(Path(root), config.banks, config.schema_):
         try:
             workbook = load_workbook(meta.path, data_only=True)
         except Exception:
@@ -169,7 +189,8 @@ def profile_headers(root: Path | str, config: Config) -> pd.DataFrame:
                 if not table.rows:
                     continue
                 results = mapper.resolve_table(
-                    table.headers, table.rows, meta.bank_code, table.header_parts
+                    table.headers, table.rows, meta.bank_code, table.header_parts,
+                    produit=meta.produit,
                 )
                 for mapping in results:
                     if not mapping.normalized:
@@ -178,6 +199,7 @@ def profile_headers(root: Path | str, config: Config) -> pd.DataFrame:
                         "en_tete_normalise": mapping.normalized,
                         "variantes": set(),
                         "banques": set(),
+                        "produits": set(),
                         "fichiers": 0,
                         "champ_propose": mapping.canonical or "(non résolu)",
                         "methode": mapping.method,
@@ -187,6 +209,8 @@ def profile_headers(root: Path | str, config: Config) -> pd.DataFrame:
                     entry["variantes"].add(mapping.header)
                     if meta.bank_code:
                         entry["banques"].add(meta.bank_code)
+                    if meta.produit:
+                        entry["produits"].add(meta.produit)
                     entry["fichiers"] += 1
                 break   # the first sheet with data is the sales table
         finally:
@@ -198,6 +222,7 @@ def profile_headers(root: Path | str, config: Config) -> pd.DataFrame:
             "en_tete_normalise": entry["en_tete_normalise"],
             "variantes": " | ".join(sorted(entry["variantes"])),
             "banques": ", ".join(sorted(entry["banques"])),
+            "produits": ", ".join(sorted(entry["produits"])),
             "fichiers": entry["fichiers"],
             "champ_propose": entry["champ_propose"],
             "methode": entry["methode"],

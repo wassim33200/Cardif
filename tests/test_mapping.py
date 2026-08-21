@@ -63,7 +63,7 @@ def test_duplicate_claims_are_not_silently_resolved(config, mapper):
     """Two columns claiming one field must go to a human, not let the last one win."""
     headers = ["Prime totale", "Montant prime"]
     rows = [[100.0, 100.0], [200.0, 200.0]]
-    results = mapper.resolve_table(headers, rows, "BNA")
+    results = mapper.resolve_table(headers, rows, "CNEP")
     claimed = [r for r in results if r.canonical == "prime_totale"]
     assert len(claimed) == 1
     loser = next(r for r in results if r.canonical is None)
@@ -73,20 +73,20 @@ def test_duplicate_claims_are_not_silently_resolved(config, mapper):
 def test_learned_alias_closes_an_unresolved_header(config, mapper):
     """One confirmation must remove the question permanently."""
     rows = [[1500.0], [2300.0]]
-    before = mapper.resolve_table(["Mtt Glob"], rows, "BNA")[0]
+    before = mapper.resolve_table(["Mtt Glob"], rows, "CNEP")[0]
     assert before.canonical is None
 
     config.aliases.learn("mtt glob", "prime_totale")
-    after = mapper.resolve_table(["Mtt Glob"], rows, "BNA")[0]
+    after = mapper.resolve_table(["Mtt Glob"], rows, "CNEP")[0]
     assert after.canonical == "prime_totale"
     assert after.method == "exact"
 
 
 def test_bank_specific_alias_does_not_leak_to_other_banks(config, mapper):
-    config.aliases.learn("montant", "capital_assure", bank="BNA")
+    config.aliases.learn("montant", "capital_assure", bank="CNEP")
     rows = [[50000.0], [60000.0]]
-    assert mapper.resolve_table(["Montant"], rows, "BNA")[0].canonical == "capital_assure"
-    other = mapper.resolve_table(["Montant"], rows, "BIAT")[0]
+    assert mapper.resolve_table(["Montant"], rows, "CNEP")[0].canonical == "capital_assure"
+    other = mapper.resolve_table(["Montant"], rows, "BNPPED")[0]
     assert other.canonical != "capital_assure"
 
 

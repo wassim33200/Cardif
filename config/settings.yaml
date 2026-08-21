@@ -43,7 +43,10 @@ validation:
 
 warehouse:
   path: "warehouse"
-  profile: "powerbi_2025"
+  # Le produit est détecté fichier par fichier, il n'y a donc pas de format unique.
+  # Ceci est le produit de repli, utilisé quand un fichier n'a pas pu être identifié :
+  # il garde les champs communs à tous les produits plutôt que de rejeter le fichier.
+  profile: "generique"
   write_xlsx: true
   # Excel tops out just above a million rows; refuse rather than truncate silently.
   xlsx_row_limit: 1000000

@@ -20,7 +20,7 @@ def corpus_run(request):
     # The one header the deterministic tiers cannot resolve; confirming it is what the
     # user does once in the review screen.
     config.aliases.learn("mtt glob", "prime_totale")
-    outcome = run(root, config, "detaille", use_model=False)
+    outcome = run(root, config, "ade_immobilier", use_model=False)
     return root, truth, config, outcome
 
 
@@ -95,7 +95,7 @@ def test_late_declarations_are_kept_not_dropped(corpus_run):
 def test_run_is_deterministic(corpus_run):
     """Same inputs, same output. Without this an auditor cannot check anything."""
     root, _, config, outcome = corpus_run
-    again = run(root, config, "detaille", use_model=False)
+    again = run(root, config, "ade_immobilier", use_model=False)
     assert again.frame["row_hash"].tolist() == outcome.frame["row_hash"].tolist()
     first = outcome.frame.drop(columns=["ingested_at"])
     second = again.frame.drop(columns=["ingested_at"])

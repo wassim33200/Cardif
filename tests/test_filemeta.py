@@ -39,14 +39,15 @@ def test_two_month_names_is_ambiguous_not_first_wins():
 
 
 def test_bank_from_folder(config):
-    assert resolve_bank("BNA 2025", config.banks)[0] == "BNA"
-    assert resolve_bank("biat_2024", config.banks)[0] == "BIAT"
-    assert resolve_bank("Banque Habitat 2025", config.banks)[0] == "BH"
+    assert resolve_bank("CNEP 2025", config.banks)[0] == "CNEP"
+    assert resolve_bank("cnep_2024", config.banks)[0] == "CNEP"
+    assert resolve_bank("BNP Paribas El Djazair 2025", config.banks)[0] == "BNPPED"
+    assert resolve_bank("BNPPED 2025", config.banks)[0] == "BNPPED"
 
 
 def test_bank_token_must_be_a_whole_word(config):
-    # "BHX" must not resolve to "BH" just because it starts with it.
-    assert resolve_bank("BHX 2025", config.banks)[0] is None
+    # "CNEPX" must not resolve to "CNEP" just because it starts with it.
+    assert resolve_bank("CNEPX 2025", config.banks)[0] is None
     assert resolve_bank("XYZ 2025", config.banks)[0] is None
 
 

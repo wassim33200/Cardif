@@ -37,7 +37,6 @@ state = st.session_state
 root = exiger_un_dossier()
 
 config = load_config(state.get("config_dir", "config"))
-profile_name = state.get("profile", config.settings.warehouse.profile)
 
 review_tab, inventory_tab = st.tabs(["À vérifier", "Toutes les colonnes"])
 
@@ -83,7 +82,7 @@ with review_tab:
     if st.button("Vérifier les colonnes", type="primary"):
         with st.spinner("Traitement…"):
             state["review_run"] = run(
-                root, config, profile_name,
+                root, config,
                 use_model=state.get("use_model", True),
                 overrides=state.get("overrides", {}),
             )

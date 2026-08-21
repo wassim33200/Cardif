@@ -27,32 +27,33 @@ from .store import SchemaContractError, Warehouse, WarehouseCorrupt
 def _add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("root", type=Path, help="folder containing the bank folders")
     parser.add_argument("--config", type=Path, default=Path("config"))
-    parser.add_argument("--profile", default=None, help="export profile from schema.yaml")
+    parser.add_argument("--produit", "--profile", dest="profile", default=None,
+                        help="force a product instead of reading it from the filename")
     parser.add_argument("--no-model", action="store_true", help="skip the local model")
 
 
 def cmd_scan(args) -> int:
     config = load_config(args.config)
-    metas = scan(args.root, config.banks)
+    metas = scan(args.root, config.banks, config.schema_)
     if not metas:
         print(f"no workbooks found under {args.root}")
         return 1
 
     print(f"{len(metas)} workbooks\n")
-    print(f"{'file':44s} {'bank':6s} {'period':9s} {'method':12s}")
-    print("-" * 76)
+    print(f"{'file':38s} {'bank':7s} {'product':22s} {'period':9s}")
+    print("-" * 80)
     unresolved = 0
     for meta in metas:
         if not meta.resolved:
             unresolved += 1
         print(
-            f"{meta.path.name[:43]:44s} {(meta.bank_code or '?'):6s} "
-            f"{(meta.period or '?'):9s} {meta.period_method:12s}"
+            f"{meta.path.name[:37]:38s} {(meta.bank_code or '?'):7s} "
+            f"{(meta.produit or '?')[:21]:22s} {(meta.period or '?'):9s}"
         )
         for note in meta.notes:
             print(f"    ! {note}")
     if unresolved:
-        print(f"\n{unresolved} file(s) need a bank or period set by hand.")
+        print(f"\n{unresolved} file(s) need a bank, product or period set by hand.")
     return 0
 
 
@@ -66,8 +67,9 @@ def cmd_profile(args) -> int:
     unresolved = frame[frame["champ_propose"] == "(non résolu)"]
     print(f"{len(frame)} distinct headers across the corpus")
     print(f"{len(frame) - len(unresolved)} map to a known field, {len(unresolved)} do not\n")
-    print(frame[["variantes", "banques", "fichiers", "champ_propose", "methode"]]
-          .to_string(index=False, max_colwidth=40))
+    colonnes = [c for c in ("variantes", "banques", "produits", "fichiers",
+                            "champ_propose", "methode") if c in frame.columns]
+    print(frame[colonnes].to_string(index=False, max_colwidth=32))
 
     if args.output:
         frame.to_excel(args.output, index=False, sheet_name="Entêtes")
@@ -105,7 +107,7 @@ def cmd_commit(args) -> int:
     config = load_config(args.config)
     warehouse = Warehouse(config, args.warehouse, args.profile)
 
-    metas = scan(args.root, config.banks)
+    metas = scan(args.root, config.banks, config.schema_)
     buckets = warehouse.pending([m.path for m in metas])
     todo = buckets["new"] + buckets["changed"]
 
@@ -143,6 +145,10 @@ def cmd_commit(args) -> int:
         f"{verb} {summary['written']} rows "
         f"(replaced {summary['replaced']}), warehouse now holds {summary['total']}"
     )
+    for code, detail in sorted(summary.get("par_produit", {}).items()):
+        print(f"  {code:24s} {detail['total']:6d} rows")
+    for note in summary.get("skipped_xlsx", []):
+        print(f"  ! {note}")
     if args.audit and outcome.frame is not None:
         write_audit(args.audit, outcome.results, outcome.validation, outcome.frame)
         print(f"audit written to {args.audit}")
@@ -158,16 +164,17 @@ def cmd_status(args) -> int:
         return 0
 
     print(f"warehouse: {warehouse.root}")
-    print(f"profile:   {warehouse.manifest.profile}")
     print(f"rows:      {len(fact)}")
     print(f"files:     {len(warehouse.manifest.files)}")
+    print(f"products:  {len(warehouse.produits_presents())}")
     print()
-    grouped = fact.groupby("banque").agg(
+    cles = [c for c in ("banque", "produit_code") if c in fact.columns]
+    grouped = fact.groupby(cles).agg(
         lignes=("row_hash", "count"),
         mois=("mois_reception", "nunique"),
     )
     if "prime_totale" in fact.columns:
-        grouped["prime_totale"] = fact.groupby("banque")["prime_totale"].sum().round(2)
+        grouped["prime_totale"] = fact.groupby(cles)["prime_totale"].sum().round(2)
     print(grouped.to_string())
     return 0
 

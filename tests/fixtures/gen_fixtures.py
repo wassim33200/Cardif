@@ -305,43 +305,75 @@ def write_month(path: Path, style: BankStyle, year: int, month: int,
     }
 
 
-def filename_for(bank: str, year: int, month: int, rng: random.Random) -> str:
-    """Produce one of the many filename shapes the banks actually use."""
+# Every file names its product, because each bank sends one file per product.
+PRODUCT_NAMES = {
+    "ade_immobilier": ["ADE_Immobilier", "ADE immo", "Credit immobilier"],
+    "sahti": ["SAHTI", "Sahti"],
+    "cnep_total_prevoyance": ["CTP", "CNEP Total Prevoyance"],
+    "rihlati": ["RIHLATI", "Rihlati"],
+    "ade_automobile": ["ADE_Automobile", "Credit automobile"],
+    "assurcompte": ["Assurcompte"],
+    "voyage_visa": ["Carte VISA", "Voyage VISA"],
+    "protection_optimale": ["Protection Optimale"],
+}
+
+
+def filename_for(
+    bank: str, product: str, year: int, month: int, rng: random.Random
+) -> str:
+    """One of the filename shapes the banks actually use, naming the product."""
+    label = rng.choice(PRODUCT_NAMES[product])
     m = MONTHS_FR[month - 1]
     m_acc = MONTHS_FR_ACCENTED[month - 1]
     yy = year % 100
     patterns = [
-        f"Ventes_{m_acc.capitalize()}_{year}.xlsx",
-        f"ventes {m} {yy}.xlsx",
-        f"{bank}_{month:02d}_{year}.xlsx",
-        f"{bank} {m_acc} {year}.xlsx",
-        f"production-{year}-{month:02d}.xlsx",
-        f"Etat {m[:4]} {yy}.xlsx",
-        f"{year}{month:02d} ventes {bank}.xlsx",
-        f"VENTES {m.upper()} {year}.xlsx",
+        f"{label}_{m_acc.capitalize()}_{year}.xlsx",
+        f"{label} {m} {yy}.xlsx",
+        f"{label}_{month:02d}_{year}.xlsx",
+        f"Ventes {label} {m_acc} {year}.xlsx",
+        f"{year}{month:02d} {label}.xlsx",
+        f"Etat {label} {m[:4]} {yy}.xlsx",
     ]
     return rng.choice(patterns)
 
 
-def generate(out_dir: Path, banks: list[str], year: int, seed: int = 42) -> list[dict]:
-    """Generate a full year of workbooks for each bank. Returns the answer key."""
+# Which products each partner sells, matching config/produits.yaml.
+BANK_PRODUCTS = {
+    "CNEP": ["ade_immobilier", "sahti", "cnep_total_prevoyance", "rihlati"],
+    "BNPPED": ["ade_immobilier", "ade_automobile", "assurcompte", "voyage_visa"],
+}
+
+
+def generate(
+    out_dir: Path, banks: list[str] | None = None, year: int = 2025, seed: int = 42
+) -> list[dict]:
+    """Generate a year of workbooks: one file per product, per bank, per month.
+
+    Returns the answer key the tests assert against.
+    """
     if out_dir.exists():
         shutil.rmtree(out_dir)
     rng = random.Random(seed)
+    banks = banks or list(BANK_PRODUCTS)
     truth = []
-    for index, bank in enumerate(banks):
-        style = BankStyle(bank, index, rng)
+    index = 0
+    for bank in banks:
         folder = out_dir / f"{bank} {year}"
-        for month in range(1, 13):
-            name = filename_for(bank, year, month, rng)
-            truth.append(write_month(folder / name, style, year, month, rng))
+        for product in BANK_PRODUCTS[bank]:
+            style = BankStyle(bank, index, rng)
+            index += 1
+            for month in range(1, 13):
+                name = filename_for(bank, product, year, month, rng)
+                entry = write_month(folder / name, style, year, month, rng)
+                entry["produit"] = product
+                truth.append(entry)
     return truth
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default="tests/fixtures/generated")
-    parser.add_argument("--banks", nargs="+", default=["BNA", "BIAT", "STB", "BH", "ATB", "UIB"])
+    parser.add_argument("--banks", nargs="+", default=None)
     parser.add_argument("--year", type=int, default=2025)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()

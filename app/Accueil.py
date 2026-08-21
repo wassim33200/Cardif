@@ -43,21 +43,15 @@ def barre_laterale(config):
                 etat.pop(cle, None)
             st.rerun()
 
-    profils = list(config.schema_.profiles)
-    defaut = config.settings.warehouse.profile
-    etiquettes = {
-        "powerbi_2025": "Prime globale seulement",
-        "detaille": "Détail des primes (nette + frais)",
-    }
-    etat["profile"] = st.sidebar.selectbox(
-        "Colonnes à produire", profils,
-        index=profils.index(defaut) if defaut in profils else 0,
-        format_func=lambda nom: etiquettes.get(nom, nom),
-        help="Ce que contiendra le fichier consolidé.",
-    )
-    st.sidebar.caption(
-        "→ " + ", ".join(config.schema_.label_map(etat["profile"]).values())
-    )
+    # Plus de format global : le produit est lu dans le nom de chaque fichier, et
+    # c'est lui qui décide des colonnes. On montre donc le catalogue, sans rien choisir.
+    familles = config.schema_.produits_par_famille()
+    nombre = sum(len(codes) for codes in familles.values())
+    with st.sidebar.expander(f"Produits reconnus ({nombre})"):
+        for famille, codes in familles.items():
+            st.markdown(f"**{famille.capitalize()}**")
+            for code in codes:
+                st.caption(f"· {config.produit(code).label}")
 
     with st.sidebar.expander("Options avancées"):
         etat["use_model"] = st.toggle(
@@ -140,8 +134,7 @@ def accueil_normal(config) -> None:
     st.title("Consolidation des ventes")
 
     entrepot = Warehouse(
-        config, st.session_state.get("warehouse_dir", str(RACINE / "warehouse")),
-        st.session_state.get("profile"),
+        config, st.session_state.get("warehouse_dir", str(RACINE / "warehouse"))
     )
     try:
         faits = entrepot.read_fact()
@@ -149,10 +142,15 @@ def accueil_normal(config) -> None:
         st.error(str(exc))
         st.stop()
 
-    gauche, milieu, droite = st.columns(3)
-    gauche.metric("Fichiers dans le dossier", compter_classeurs(Path(racine)))
-    milieu.metric("Ventes déjà consolidées", f"{len(faits):,}".replace(",", " "))
-    droite.metric("Banques", faits["banque"].nunique() if not faits.empty else 0)
+    a, b, c, d = st.columns(4)
+    a.metric("Fichiers dans le dossier", compter_classeurs(Path(racine)))
+    b.metric("Ventes consolidées", f"{len(faits):,}".replace(",", " "))
+    c.metric("Banques", faits["banque"].nunique() if not faits.empty else 0)
+    d.metric(
+        "Produits",
+        faits["produit_code"].nunique()
+        if not faits.empty and "produit_code" in faits else 0,
+    )
 
     if faits.empty:
         st.info(
@@ -169,10 +167,15 @@ def accueil_normal(config) -> None:
     st.divider()
 
     st.subheader("Ce que contient la base")
+    par_produit = st.toggle("Détailler par produit", value=True)
+    index = ["banque", "produit_code"] if par_produit else ["banque"]
     tableau = faits.pivot_table(
-        index="banque", columns="mois_reception", values="row_hash",
+        index=index, columns="mois_reception", values="row_hash",
         aggfunc="count", fill_value=0,
     )
+    if par_produit:
+        libelles = {c: config.produit(c).label for c in config.schema_.profiles}
+        tableau = tableau.rename(index=libelles, level=1)
     st.dataframe(tableau, use_container_width=True)
 
     if "prime_totale" in faits.columns:
@@ -184,16 +187,22 @@ def accueil_normal(config) -> None:
 
     with st.expander("Où sont les fichiers pour Power BI ?"):
         chemin = entrepot.root
+        tables = entrepot.produits_presents()
         st.markdown(
             f"Dans le dossier `{chemin}` :\n\n"
-            f"- **`fact_ventes.parquet`** — toutes les banques ensemble. "
-            "C'est ce fichier qu'il faut ouvrir dans Power BI.\n"
-            "- `dim_date.parquet` — le calendrier, à marquer comme table de dates "
-            "dans Power BI.\n"
-            "- `par_banque/` — un fichier Excel et un fichier Parquet par banque, "
-            "si vous devez en transmettre un à une banque.\n"
-            "- `audit.xlsx` — le détail de tout ce qui a été nettoyé, gardé ou "
-            "signalé."
+            "**Une table par produit** — les produits n'ont pas les mêmes colonnes, "
+            "les mélanger donnerait un tableau presque vide :"
+        )
+        for code in tables:
+            st.markdown(f"- `fact_{code}.parquet` — {config.produit(code).label}")
+        st.markdown(
+            "\nEt les tables de référence, à relier dans Power BI :\n\n"
+            "- `dim_date.parquet` — le calendrier, à marquer comme table de dates\n"
+            "- `dim_produit.parquet` — la liste des produits et leurs familles\n"
+            "- `dim_banque.parquet` — la liste des banques\n"
+            "- `par_banque/` — un extrait par banque et par produit, si vous devez "
+            "en transmettre un\n"
+            "- `audit.xlsx` — le détail de tout ce qui a été nettoyé ou signalé"
         )
 
 

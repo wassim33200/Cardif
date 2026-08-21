@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 from .normalize import normalize_header
 
 FieldType = Literal[
-    "identifier", "text", "category", "date", "money", "integer", "period"
+    "identifier", "text", "category", "date", "money", "integer", "period", "percent"
 ]
 
 
@@ -63,16 +63,54 @@ class DerivedField(BaseModel):
 
 
 class ExportProfile(BaseModel):
-    """The user's declared target schema: which columns an export contains."""
+    """One product's target schema: the columns its table contains.
+
+    Products *are* the export profiles. Each bank sells several products and each
+    product carries its own fields -- an ADE has a credit and a CRD, a prevoyance has a
+    capital and a periodicity, a travel policy has a zone -- so there is no single
+    column list that fits them all. Forcing one would give a table that is mostly empty.
+    """
 
     columns: list[str]
     required: list[str] = Field(default_factory=list)
+    label: str = ""
+    famille: str = "autre"
+    partenaires: list[str] = Field(default_factory=list)
+    match: list[str] = Field(default_factory=list)
+    aliases: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("match")
+    @classmethod
+    def _normalize_match(cls, v: list[str]) -> list[str]:
+        return [normalize_header(m) for m in v]
+
+    @field_validator("aliases")
+    @classmethod
+    def _normalize_aliases(cls, v: dict[str, str]) -> dict[str, str]:
+        return {normalize_header(k): value for k, value in v.items()}
 
 
 class Schema(BaseModel):
     fields: dict[str, CanonicalField]
     derived_fields: dict[str, DerivedField] = Field(default_factory=dict)
-    profiles: dict[str, ExportProfile]
+    # Keyed by product code. Populated from produits.yaml at load time.
+    profiles: dict[str, ExportProfile] = Field(default_factory=dict)
+
+    def produits_par_famille(self) -> dict[str, list[str]]:
+        """Product codes grouped by family, for reporting and for the interface."""
+        familles: dict[str, list[str]] = {}
+        for code, produit in self.profiles.items():
+            familles.setdefault(produit.famille, []).append(code)
+        return {k: sorted(v) for k, v in sorted(familles.items())}
+
+    def produits_du_partenaire(self, banque: str | None) -> list[str]:
+        """Products a given bank distributes, plus any that name no partner."""
+        if banque is None:
+            return sorted(self.profiles)
+        return sorted(
+            code for code, p in self.profiles.items()
+            if not p.partenaires or banque in p.partenaires
+        )
 
     def model_post_init(self, _context: Any) -> None:
         known = set(self.fields) | set(self.derived_fields)
@@ -175,7 +213,8 @@ class ValidationSettings(BaseModel):
 
 class WarehouseSettings(BaseModel):
     path: str = "warehouse"
-    profile: str = "powerbi_2025"
+    # Fallback product, used when a file's product cannot be identified.
+    profile: str = "generique"
     write_xlsx: bool = True
     # Excel tops out just above a million rows. Refusing beats truncating in silence.
     xlsx_row_limit: int = Field(default=1_000_000, gt=0, le=1_048_575)
@@ -238,14 +277,29 @@ class Config(BaseModel):
 
     def model_post_init(self, _context: Any) -> None:
         # Catching this at load turns a KeyError deep in the pipeline into a clear
-        # message about the line of settings.yaml that is wrong.
-        profile = self.settings.warehouse.profile
-        if profile not in self.schema_.profiles:
+        # message naming the line of configuration that is wrong.
+        defaut = self.settings.warehouse.profile
+        if defaut and defaut not in self.schema_.profiles:
             raise ValueError(
-                f"settings.yaml names the export profile {profile!r}, which does not "
-                f"exist in schema.yaml. Available profiles: "
-                f"{sorted(self.schema_.profiles)}"
+                f"settings.yaml names the product {defaut!r}, which does not exist in "
+                f"produits.yaml. Known products: {sorted(self.schema_.profiles)}"
             )
+
+    def produit(self, code: str) -> ExportProfile:
+        """Look up a product, failing with a list of the real ones rather than KeyError."""
+        try:
+            return self.schema_.profiles[code]
+        except KeyError:
+            raise KeyError(
+                f"produit inconnu : {code!r}. Produits connus : "
+                f"{sorted(self.schema_.profiles)}"
+            ) from None
+
+    def aliases_du_produit(self, code: str | None) -> dict[str, str]:
+        """Header meanings specific to one product, which beat the general catalogue."""
+        if not code or code not in self.schema_.profiles:
+            return {}
+        return dict(self.schema_.profiles[code].aliases)
 
     def save_aliases(self) -> None:
         """Persist learned mappings back to disk."""
@@ -287,8 +341,25 @@ def load_config(config_dir: str | Path = "config") -> Config:
             raise FileNotFoundError(f"missing config file: {path}")
         return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
+    donnees_schema = _read("schema.yaml")
+    # Products live in their own file: the field catalogue is shared and stable, while
+    # products are what people actually add and change.
+    produits = _read("produits.yaml").get("produits", {})
+    donnees_schema["profiles"] = {
+        code: {
+            "columns": bloc.get("colonnes", bloc.get("columns", [])),
+            "required": bloc.get("requis", bloc.get("required", [])),
+            "label": bloc.get("label", code),
+            "famille": bloc.get("famille", "autre"),
+            "partenaires": bloc.get("partenaires", []),
+            "match": bloc.get("match", []),
+            "aliases": bloc.get("aliases", {}),
+        }
+        for code, bloc in produits.items()
+    }
+
     return Config(
-        schema=Schema(**_read("schema.yaml")),
+        schema=Schema(**donnees_schema),
         banks=Banks(**_read("banks.yaml")),
         settings=Settings(**_read("settings.yaml")),
         aliases=AliasStore(**_read("aliases.yaml")),
