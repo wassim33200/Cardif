@@ -178,6 +178,7 @@ def build_frame(
     produit_code = profile_name
     profile = config.produit(profile_name)
     schema = config.schema_
+    source_format = config.source_format(meta.path.name, profile_name)
 
     # Which sheet column feeds which canonical field.
     by_field = {m.canonical: m for m in mappings if m.canonical}
@@ -222,6 +223,8 @@ def build_frame(
             data[name] = [meta.period] * n_rows
         elif name == "annee_reception":
             data[name] = [meta.year] * n_rows
+        elif name == "source_format":
+            data[name] = [source_format.name if source_format else None] * n_rows
         else:
             data[name] = columns.get(name, [None] * n_rows)
 
@@ -264,7 +267,7 @@ def build_frame(
             frame[name] = pd.to_datetime(frame[name], errors="coerce")
 
     missing_required = [
-        name for name in profile.required
+        name for name in (source_format.required if source_format else profile.required)
         if name not in frame.columns or frame[name].isna().all()
     ]
     return frame, reports, derived, missing_required
@@ -289,6 +292,7 @@ def process_file(
     if profile_name not in config.schema_.profiles:
         profile_name = config.settings.warehouse.profile
     result = FileResult(meta=meta, produit=profile_name)
+    source_format = config.source_format(meta.path.name, profile_name)
 
     # Messages here are read by people who did not write this tool, so each one says
     # what happened and what to do about it, in the language of the files.
@@ -299,9 +303,12 @@ def process_file(
             "(par exemple « BNA 2025 »), ou ajoutez la banque dans la configuration."
         )
         return result
+    if meta.period_conflict:
+        result.error = "Périodes contradictoires entre le fichier et le dossier. " + " ".join(meta.notes)
+        return result
     if meta.period is None:
         result.error = (
-            f"Mois introuvable : impossible de lire un mois dans le nom du fichier "
+            f"Mois introuvable dans les dossiers ou dans le nom du fichier "
             f"« {meta.path.name} ». Renommez-le en y mettant le mois, par exemple "
             "« Ventes_Mars_2025.xlsx » ou « ventes_03_2025.xlsx »."
         )
@@ -327,6 +334,9 @@ def process_file(
             )
 
         vocabulary = set(mapper.seed) | set(config.aliases.global_)
+        if source_format:
+            vocabulary.update(source_format.aliases)
+            result.notes.append(f"Dictionnaire ADE-IMMO : format {source_format.name}.")
         table = extract_table(
             workbook[sheet_name], vocabulary, config.settings.detection
         )
@@ -366,6 +376,7 @@ def process_file(
         mappings = mapper.resolve_table(
             table.headers, table.rows, meta.bank_code, table.header_parts,
             produit=profile_name,
+            source_format=source_format,
         )
         if overrides:
             for mapping in mappings:

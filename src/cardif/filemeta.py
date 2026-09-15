@@ -47,9 +47,9 @@ _MONTH_RE = re.compile(
     "|".join(f"(?P<m{num}>{pat})" for pat, num in MONTH_PATTERNS)
 )
 
-# yyyy-mm / yyyy_mm / yyyymm, and mm-yyyy / mm_yyyy. Bare "2025" alone is not a period.
+# yyyy-mm / yyyy_mm / yyyymm, and mm-yyyy / mm_yyyy / mmyyyy.
 _YM_SEPARATED = re.compile(r"(?<!\d)(20\d{2})[\-_. ]?(0[1-9]|1[0-2])(?!\d)")
-_MY_SEPARATED = re.compile(r"(?<!\d)(0[1-9]|1[0-2])[\-_. ](20\d{2})(?!\d)")
+_MY_SEPARATED = re.compile(r"(?<!\d)(0[1-9]|1[0-2])[\-_. ]?(20\d{2})(?!\d)")
 _YEAR4 = re.compile(r"(?<!\d)(20\d{2})(?!\d)")
 _YEAR2 = re.compile(r"(?<!\d)(\d{2})(?!\d)")
 
@@ -70,6 +70,7 @@ class FileMeta:
     produit_label: str | None = None
     produit_method: str = "unresolved"
     notes: list[str] = field(default_factory=list)
+    period_conflict: bool = False
 
     @property
     def period(self) -> str | None:
@@ -84,6 +85,7 @@ class FileMeta:
             self.bank_code is not None
             and self.period is not None
             and self.produit is not None
+            and not self.period_conflict
         )
 
     def describe(self) -> str:
@@ -244,9 +246,35 @@ def resolve_produit(
 def read_meta(path: Path, banks: Banks, schema: Schema | None = None) -> FileMeta:
     """Resolve bank and period for a single workbook path."""
     folder = path.parent.name
-    code, label, bank_method = resolve_bank(folder, banks)
-    fallback = year_from_folder(folder)
+    # Files may live under BANK / PRODUCT / MM-YYYY / workbook.xlsx.
+    code, label, bank_method = None, None, "unresolved"
+    fallback = None
+    folder_period = None
+    for parent in path.parents:
+        if code is None:
+            code, label, bank_method = resolve_bank(parent.name, banks)
+        if fallback is None:
+            fallback = year_from_folder(parent.name)
+        if folder_period is None:
+            fy, fm, fmethod, fconfidence = resolve_period(parent.name)
+            if fy is not None and fm is not None:
+                folder_period = (fy, fm, fmethod, fconfidence)
+                if fallback is None:
+                    fallback = fy
+        # Do not interpret unrelated ancestors above the bank's directory.
+        if code is not None:
+            break
     year, month, method, confidence = resolve_period(path.name, fallback)
+    conflict = False
+    if folder_period:
+        fy, fm, fmethod, fconfidence = folder_period
+        if year is not None and month is not None:
+            conflict = (year, month) != (fy, fm)
+        elif month is None and _MONTH_RE.search(normalize_header(path.stem)):
+            # An explicitly ambiguous filename must still be reviewed.
+            pass
+        else:
+            year, month, method, confidence = fy, fm, f"folder_{fmethod}", fconfidence
 
     meta = FileMeta(
         path=path,
@@ -257,7 +285,13 @@ def read_meta(path: Path, banks: Banks, schema: Schema | None = None) -> FileMet
         month=month,
         period_method=method,
         period_confidence=confidence,
+        period_conflict=conflict,
     )
+    if conflict:
+        meta.notes.append(
+            f"Périodes contradictoires : fichier {year:04d}-{month:02d}, "
+            f"dossier {fy:04d}-{fm:02d}. Corrigez le nom avant consolidation."
+        )
 
     if schema is not None:
         produit, produit_label, produit_method = resolve_produit(path, schema, code)

@@ -88,6 +88,76 @@ data/
 
 A sub-folder per product works too: `CNEP 2025/SAHTI/ventes mars.xlsx`.
 
+The bank / product / month layout is also supported, including when you select the
+bank folder itself as the input root:
+
+```text
+test/BNP/ADE CONSO/01-2026/ventes.xlsx
+test/BNP/ADE IMMO/01-2026/P_ADE_012026_T24.xlsx
+test/BNP/ASSUR COMPTE/01-2026/ventes.xlsx
+test/BNP/CARTE VISA/01-2026/ventes.xlsx
+test/BNP/Prévoyance Collective/01-2026/ventes.xlsx
+test/BNP/Prévoyance individuelle/01-2026/ventes.xlsx
+```
+
+`Prévoyance indiciduelle`, as spelled in the supplied folder tree, is accepted too.
+The nearest bank ancestor identifies the bank. A month folder supplies the period
+when the filename has none. Compact `MMYYYY` and `YYYYMM` dates are supported.
+Conflicting filename/folder periods block that file until its path is corrected.
+
+### ADE-IMMO reference dictionary
+
+`config/ade_dictionary.yaml` transcribes the **120 CHAMP_REF rows** in the supplied
+ADE-IMMO/CNEP screenshots. It applies to the `ade_immobilier` product when the filename
+matches one of these formats (case, spaces, underscores and hyphens are normalized):
+
+| Filename | Source format |
+|---|---|
+| `P_ADE_MMYYYY_T24.xlsx` | `p_t24` |
+| `P_ADE_MMYYYY_D6.xlsx` | `p_d6` |
+| `C_ADE_MMYYYY_T24.xlsx` | `c_t24` |
+| `C_ADE_MMYYYY_D6.xlsx` | `c_d6` |
+| `P_ADE_MMYYYY-FIT.xlsx` or `-FIIT.xlsx` | `p_fit` |
+| `C_ADE_MMYYYY-FIT.xlsx` or `-FIIT.xlsx` | `c_fit` |
+| `Imp_ADE_IMMO_MMYYYY.xlsx` | `imp` |
+
+Replace `MMYYYY` with the actual period, e.g. `032026`. Put these files under
+`CNEP/ADE IMMO/03-2026/` or `BNP/ADE IMMO/03-2026/`; generic `P_ADE` alone does not
+identify which ADE product the file belongs to.
+
+Mappings are exact and scoped to the source format. For example, `N_PRET` feeds `LD`
+in C/T24 and FIT, but feeds the separate `N_PRET` reference in D6. `MNT_PRIME` feeds
+`PRIME` in P/D6 and Imp, and the separate `MNT_PRIME` reference in C/D6 and FIT.
+Client identifiers, surnames and first names also remain separate. Blank dictionary
+cells do not create mappings. Unknown headers in a recognized format go to review;
+they are never fuzzy-matched or sent to the model.
+
+ADE-IMMO Excel extracts start with the 120 reference labels in screenshot order,
+followed by the existing reporting/provenance columns. Parquet keeps stable internal
+field names; the dictionary's `field` entries document their reference labels.
+The reported `MOIS DE RECEPTION`, `MOIS PRIME`, `Mois`, etc. remain separate from the
+path-derived `mois_reception`. `source_format` identifies each row's format: use it
+to separate source streams in reports before adding their premiums together.
+Different known formats may coexist in one bank/product/month; a second file of the
+same format is still flagged. C/D6 does not report `DATE_MOBILISATION` in the supplied
+dictionary, so that format requires only its policy identifier and premium.
+
+The screenshots contain no mappings for **Avenant positif/Négatif**, and no field
+dictionaries for the other products. Those remain on the existing general mapper;
+their specific mappings have not been invented. This transcription was verified on
+synthetic workbooks, not actual bank workbooks. Add or correct source spellings in
+the dictionary when comparing against the original Excel dictionary.
+
+The ADE-IMMO schema has expanded. If you already have a warehouse, rebuild into a
+**new warehouse directory** from all original files (the schema contract prevents
+silently appending this new shape to an old table):
+
+```powershell
+cardif scan "C:\donnees\test"
+cardif run "C:\donnees\test" --no-model --audit audit.xlsx
+cardif commit "C:\donnees\test" --no-model --warehouse warehouse_v2
+```
+
 ## What you get
 
 ```

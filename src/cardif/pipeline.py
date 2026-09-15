@@ -175,8 +175,10 @@ def profile_headers(root: Path | str, config: Config) -> pd.DataFrame:
     mapper = Mapper(config)
     vocabulary = set(mapper.seed) | set(config.aliases.global_)
 
-    seen: dict[str, dict] = {}
+    seen: dict[tuple[str, str | None, str], dict] = {}
     for meta in scan(Path(root), config.banks, config.schema_):
+        source_format = config.source_format(meta.path.name, meta.produit)
+        file_vocabulary = vocabulary | (set(source_format.aliases) if source_format else set())
         try:
             workbook = load_workbook(meta.path, data_only=True)
         except Exception:
@@ -184,18 +186,22 @@ def profile_headers(root: Path | str, config: Config) -> pd.DataFrame:
         try:
             for sheet_name in workbook.sheetnames:
                 table = extract_table(
-                    workbook[sheet_name], vocabulary, config.settings.detection
+                    workbook[sheet_name], file_vocabulary, config.settings.detection
                 )
                 if not table.rows:
                     continue
                 results = mapper.resolve_table(
                     table.headers, table.rows, meta.bank_code, table.header_parts,
                     produit=meta.produit,
+                    source_format=source_format,
                 )
                 for mapping in results:
                     if not mapping.normalized:
                         continue
-                    entry = seen.setdefault(mapping.normalized, {
+                    # N_PRET and MNT_PRIME have different meanings across formats.
+                    key = (mapping.normalized, meta.produit, source_format.name if source_format else "")
+                    entry = seen.setdefault(key, {
+                        "format_source": source_format.name if source_format else "",
                         "en_tete_normalise": mapping.normalized,
                         "variantes": set(),
                         "banques": set(),
@@ -220,6 +226,7 @@ def profile_headers(root: Path | str, config: Config) -> pd.DataFrame:
     for entry in seen.values():
         rows.append({
             "en_tete_normalise": entry["en_tete_normalise"],
+            "format_source": entry["format_source"],
             "variantes": " | ".join(sorted(entry["variantes"])),
             "banques": ", ".join(sorted(entry["banques"])),
             "produits": ", ".join(sorted(entry["produits"])),

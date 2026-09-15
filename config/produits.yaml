@@ -58,6 +58,37 @@ produits:
                commission_partenaire, retention_assureur, statut]
     requis: [num_contrat, date_effet, prime_totale]
 
+  ade_consommation:
+    label: "ADE Consommation"
+    famille: ade
+    partenaires: [BNPPED]
+    match: ["ade conso", "ade consommation", "credit consommation"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, num_credit, nom_client,
+               date_naissance, agence, date_effet, date_fin, duree, montant_credit,
+               capital_restant_du, formule, taux_prime, prime_nette, frais, prime_totale,
+               commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+
+  prevoyance_collective:
+    label: "Prévoyance Collective"
+    famille: prevoyance
+    partenaires: [BNPPED]
+    match: ["prevoyance collective"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, nom_client,
+               date_naissance, agence, date_effet, date_fin, capital_assure,
+               periodicite, prime_totale, commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+
+  prevoyance_individuelle:
+    label: "Prévoyance Individuelle"
+    famille: prevoyance
+    partenaires: [BNPPED]
+    match: ["prevoyance individuelle", "prevoyance indiciduelle"]
+    colonnes: [banque, produit_code, mois_reception, num_contrat, nom_client,
+               date_naissance, agence, date_effet, date_fin, capital_assure,
+               periodicite, prime_totale, commission_partenaire, statut]
+    requis: [num_contrat, date_effet, prime_totale]
+
   # ================================================== Prévoyance : capital, vendue seule
   cnep_total_prevoyance:
     label: "CNEP Total Prévoyance"

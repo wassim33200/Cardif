@@ -1,0 +1,1058 @@
+# Dictionnaire ADE-IMMO : transcription des 120 lignes CHAMP_REF fournies.
+# Une cellule vide du dictionnaire ne crée aucune correspondance.
+# Les sources sont spécifiques au format : ne pas les convertir en aliases globaux.
+# La colonne Avenant positif/Négatif était vide : aucun mapping n'est inventé.
+# Les intitulés et types techniques non confirmés restent du texte pour préserver les valeurs.
+produits:
+- ade_immobilier
+formats:
+  p_t24:
+    pattern: p ade [0-9]{6} t24
+    required:
+    - num_contrat
+    - date_effet
+    - prime_totale
+  p_d6:
+    pattern: p ade [0-9]{6} d6
+    required:
+    - num_contrat
+    - date_effet
+    - prime_totale
+  c_t24:
+    pattern: c ade [0-9]{6} t24
+    required:
+    - num_contrat
+    - date_effet
+    - prime_totale
+  c_d6:
+    pattern: c ade [0-9]{6} d6
+    required:
+    - num_contrat
+    - prime_totale
+  p_fit:
+    pattern: p ade [0-9]{6} fii?t
+    required:
+    - num_contrat
+    - date_effet
+    - prime_totale
+  c_fit:
+    pattern: c ade [0-9]{6} fii?t
+    required:
+    - num_contrat
+    - date_effet
+    - prime_totale
+  imp:
+    pattern: imp ade immo [0-9]{6}
+    required:
+    - num_contrat
+    - date_effet
+    - prime_totale
+columns:
+- reference: LD
+  field: num_contrat
+  type: identifier
+  sources:
+    p_t24:
+    - LD
+    p_d6:
+    - NUM_POLICE
+    c_t24:
+    - N_PRET
+    c_d6:
+    - NUM_POLICE
+    p_fit:
+    - N_PRET
+    c_fit:
+    - N_PRET
+    imp:
+    - NUM_POLICE
+- reference: AGENCE
+  field: agence
+  type: category
+  sources:
+    p_t24:
+    - AGENCE
+    p_d6:
+    - CODE_AGENC
+    c_t24:
+    - CODE_AGENC
+    c_d6:
+    - IDAGENCE
+    p_fit:
+    - CODE_AGENC
+    c_fit:
+    - CODE_AGENC
+    imp:
+    - IDAGENCE
+- reference: MONTANT_ACCORDE
+  field: montant_credit
+  type: money
+  sources:
+    p_t24:
+    - MONTANT ACCORDE
+    p_d6:
+    - MNT_ACCORD
+    c_t24:
+    - MNT_ACCORD
+    p_fit:
+    - MNT_ACCORD
+    c_fit:
+    - MNT_ACCORD
+    imp:
+    - MNT_ASSUR
+- reference: CRD
+  field: capital_restant_du
+  type: money
+  sources:
+    p_t24:
+    - CRD
+    p_d6:
+    - CRD
+    c_t24:
+    - CRD
+    p_fit:
+    - CRD
+    c_fit:
+    - CRD
+- reference: CLIENT
+  field: ade_client
+  type: identifier
+  sources:
+    p_t24:
+    - CLIENT
+    p_d6:
+    - NUM_PART
+    c_t24:
+    - CLIENT
+    c_d6:
+    - NUM_PART
+    p_fit:
+    - CLIENT
+    c_fit:
+    - CLIENT
+    imp:
+    - NUM_PART
+- reference: NUM_ASSUR
+  field: ade_num_assur
+  type: identifier
+  sources:
+    p_t24:
+    - NUM_ASSUR
+    p_d6:
+    - NUM_ASSUR
+    c_t24:
+    - NUM_ASSUR
+    p_fit:
+    - NUM_ASSUR
+    c_fit:
+    - NUM_ASSUR
+- reference: TYPE_ASSUR
+  field: ade_type_assur
+  type: text
+  sources:
+    p_t24:
+    - TYPE_ASSUR
+    p_d6:
+    - TYPE_ASSUR
+    c_t24:
+    - TYPE_ASSUR
+    c_d6:
+    - IDTYPE_ASSU
+    p_fit:
+    - TYPE_ASSUR
+    c_fit:
+    - TYPE_ASSUR
+    imp:
+    - TYPE_ASSURE
+- reference: NOM_CLIENT
+  field: nom_client
+  type: text
+  sources:
+    p_t24:
+    - NOM_CLIENT
+    p_d6:
+    - NOM
+    c_d6:
+    - NOM
+    p_fit:
+    - NOM_CLIENT
+    c_fit:
+    - NOM_CLIENT
+- reference: PRENOM_CLIENT
+  field: ade_prenom_client
+  type: text
+  sources:
+    p_t24:
+    - PRENOM_CLIENT
+    p_d6:
+    - PRENOM
+    c_d6:
+    - PRENOM
+    p_fit:
+    - PRENOM_CLIENT
+    c_fit:
+    - PRENOM_CLIENT
+- reference: DATE_NAISSANCE
+  field: date_naissance
+  type: date
+  sources:
+    p_t24:
+    - DATE_NAISSANCE
+    p_d6:
+    - DATE_NAISS
+    c_d6:
+    - DATE_NAIS
+    p_fit:
+    - DATE_NAISSANCE
+    c_fit:
+    - DATE_NAISSANCE
+- reference: DATE_MOBILISATION
+  field: date_effet
+  type: date
+  sources:
+    p_t24:
+    - DATE_MOBILISATION
+    p_d6:
+    - DATE_EFFET
+    c_t24:
+    - DATE_MOBILISATION
+    p_fit:
+    - DATE_MOBILISATION
+    c_fit:
+    - DATE_MOBILISATION
+    imp:
+    - DATE_EFFET
+- reference: DATE_FIN_CREDIT
+  field: date_fin
+  type: date
+  sources:
+    p_t24:
+    - DATE_FIN_CREDIT
+    p_d6:
+    - DFIN_CREDI
+    c_t24:
+    - DATE_FIN_CREDIT
+    p_fit:
+    - DATE_FIN_CREDIT
+    c_fit:
+    - DATE_FIN_CREDIT
+    imp:
+    - DFIN_ASSUR
+- reference: DUREE_CREDIT
+  field: duree
+  type: integer
+  sources:
+    p_t24:
+    - DUREE_CREDIT
+    p_d6:
+    - DUREE_CRED
+    c_t24:
+    - DUREE_CREDIT
+    p_fit:
+    - DUREE_CREDIT
+    c_fit:
+    - DUREE_CREDIT
+- reference: DUREE_REMB
+  field: ade_duree_remb
+  type: integer
+  sources:
+    p_t24:
+    - DUREE_REMB
+    p_fit:
+    - DUREE_REMB
+    c_fit:
+    - DUREE_REMB
+- reference: ASSURANCE
+  field: ade_assurance
+  type: text
+  sources:
+    p_t24:
+    - ASSURANCE
+    c_t24:
+    - TYPE_CREDIT
+    p_fit:
+    - ASSURANCE
+    c_fit:
+    - ASSURANCE
+- reference: TYPE_ASSURANCE
+  field: ade_type_assurance
+  type: text
+  sources:
+    p_t24:
+    - TYPE_ASSURANCE
+    c_t24:
+    - STATUT_PRIME
+    p_fit:
+    - TYPE_ASSURANCE
+    c_fit:
+    - TYPE_ASSURANCE
+- reference: TAUX_PRIME
+  field: taux_prime
+  type: percent
+  sources:
+    p_t24:
+    - TAUX_PRIME
+    p_d6:
+    - TAUX_PRIME
+    c_d6:
+    - TAUX_PRIME
+    p_fit:
+    - TAUX_PRIME
+    c_fit:
+    - TAUX_PRIME
+    imp:
+    - TAUX_PRIME
+- reference: PRIME
+  field: prime_totale
+  type: money
+  sources:
+    p_t24:
+    - PRIME
+    p_d6:
+    - MNT_PRIME
+    c_t24:
+    - Mnt PRIMES G
+    c_d6:
+    - Prime
+    p_fit:
+    - PRIME TOTALE
+    c_fit:
+    - PRIME TOTALE
+    imp:
+    - MNT_PRIME
+- reference: Code ass
+  field: ade_code_ass
+  type: identifier
+  sources:
+    p_t24:
+    - Code ass
+    p_d6:
+    - CODE_C
+    c_t24:
+    - CODE_C
+    c_d6:
+    - IDSPROD
+    p_fit:
+    - CODE PRODUIT
+    c_fit:
+    - CODE PRODUIT
+    imp:
+    - IDSPROD
+- reference: TYPE_CREDIT
+  field: ade_type_credit
+  type: text
+  sources:
+    p_t24:
+    - TYPE_CREDIT
+    p_d6:
+    - TYPE_CREDI
+    p_fit:
+    - TYPE_CREDIT
+    c_fit:
+    - TYPE_CREDIT
+- reference: LIBELLE_CREDIT
+  field: ade_libelle_credit
+  type: text
+  sources:
+    p_t24:
+    - LIBELLE_CREDIT
+    c_d6:
+    - LIBELLE
+    p_fit:
+    - LIBELLE_CREDIT
+    c_fit:
+    - LIBELLE_CREDIT
+- reference: TAUX_CREDIT
+  field: ade_taux_credit
+  type: percent
+  sources:
+    p_t24:
+    - TAUX_CREDIT
+    p_d6:
+    - TAUX_CRED
+    p_fit:
+    - TAUX_CREDIT
+    c_fit:
+    - TAUX_CREDIT
+- reference: TAUX_PRIME_SUB
+  field: ade_taux_prime_sub
+  type: percent
+  sources:
+    p_t24:
+    - TAUX_PRIME_SUB
+    p_d6:
+    - TAUX_MAJ
+    p_fit:
+    - TAUX_SUBPRIME2
+    c_fit:
+    - TAUX_SUBPRIME2
+- reference: PRIME_SUB
+  field: ade_prime_sub
+  type: money
+  sources:
+    p_t24:
+    - PRIME_SUB
+- reference: STATUT_PRIME
+  field: ade_statut_prime
+  type: text
+  sources:
+    p_t24:
+    - STATUT_PRIME
+    p_fit:
+    - STATUTPRIME
+    c_fit:
+    - STATUTPRIME
+- reference: DATE_SOLDE_POLICE
+  field: ade_date_solde_police
+  type: date
+  sources:
+    p_t24:
+    - DATE_SOLDE_POLICE
+- reference: CLE_OPS
+  field: ade_cle_ops
+  type: identifier
+  sources:
+    p_d6:
+    - CLE_OPS
+    c_d6:
+    - CLE_OPS
+    imp:
+    - CLE_OPS
+- reference: NUMERO DOSSIER
+  field: ade_numero_dossier
+  type: identifier
+  sources:
+    c_t24:
+    - NUMERO DOSSIER
+    p_fit:
+    - DOSSIER
+    c_fit:
+    - DOSSIER
+- reference: MOIS DE RECEPTION
+  field: ade_mois_de_reception
+  type: text
+  sources:
+    p_t24:
+    - MOIS DE RECEPTION
+    p_d6:
+    - MOIS DE RECEPTION
+    c_t24:
+    - MOIS DE RECEPTION
+    c_d6:
+    - MOIS RECEPTION
+    p_fit:
+    - MOIS DE RECEPTION
+    c_fit:
+    - MOIS DE RECEPTION
+    imp:
+    - MOIS DE RECEPTION
+- reference: MOIS_BDD
+  field: ade_mois_bdd
+  type: text
+  sources:
+    p_t24:
+    - MOIS_BDD
+    p_d6:
+    - MOIS_BDD
+    c_t24:
+    - MOIS_BDD
+    c_d6:
+    - MOIS_BDD
+    p_fit:
+    - MOIS_BDD
+    c_fit:
+    - MOIS_BDD
+    imp:
+    - MOIS_BDD
+- reference: MOIS PRIME
+  field: ade_mois_prime
+  type: text
+  sources:
+    c_t24:
+    - MOIS PRIME
+    c_d6:
+    - MOIS
+    c_fit:
+    - MOIS PRIME
+- reference: ANNEE PRIME
+  field: ade_annee_prime
+  type: text
+  sources:
+    c_t24:
+    - ANNEE PRIME
+    c_d6:
+    - ANNEE
+    c_fit:
+    - ANNEE PRIME
+- reference: MNT_PRIME
+  field: ade_mnt_prime
+  type: money
+  sources:
+    c_t24:
+    - MNT_PRIME
+    c_d6:
+    - MNT_PRIME
+    p_fit:
+    - MNT_PRIME
+    c_fit:
+    - MNT_PRIME
+- reference: PRIME_MAJ
+  field: ade_prime_maj
+  type: money
+  sources:
+    p_d6:
+    - PRIME_MAJ
+    c_t24:
+    - PRIME_MAJ
+    p_fit:
+    - PRIME_MAJ
+    c_fit:
+    - PRIME_MAJ
+- reference: MOIS ET ANNEE FICHIER
+  field: ade_mois_et_annee_fichier
+  type: text
+  sources:
+    c_t24:
+    - MOIS ET ANNEE FICHIER
+    p_fit:
+    - Fichier mois
+    c_fit:
+    - Fichier mois
+- reference: N_PRET
+  field: num_credit
+  type: identifier
+  sources:
+    p_d6:
+    - N_PRET
+    c_d6:
+    - N_PRET
+    imp:
+    - NUM_PRET
+- reference: N_PRET1
+  field: ade_n_pret1
+  type: identifier
+  sources:
+    p_d6:
+    - N_PRET1
+- reference: N_PRET2
+  field: ade_n_pret2
+  type: identifier
+  sources:
+    p_d6:
+    - N_PRET2
+- reference: STAT_CODEB
+  field: ade_stat_codeb
+  type: text
+  sources:
+    p_d6:
+    - STAT_CODEB
+- reference: NUM_CRED
+  field: ade_num_cred
+  type: identifier
+  sources:
+    p_d6:
+    - NUM_CRED
+- reference: NUM_CONTRA
+  field: ade_num_contra
+  type: identifier
+  sources:
+    p_d6:
+    - NUM_CONTRA
+    p_fit:
+    - NUM_CONTRA
+    c_fit:
+    - NUM_CONTRA
+- reference: NUM_SS
+  field: ade_num_ss
+  type: identifier
+  sources:
+    p_d6:
+    - NUM_SS
+- reference: SEXE
+  field: ade_sexe
+  type: text
+  sources:
+    p_d6:
+    - SEXE
+- reference: TYPE_ACTIV
+  field: ade_type_activ
+  type: text
+  sources:
+    p_d6:
+    - TYPE_ACTIV
+- reference: LIBEL_FONC
+  field: ade_libel_fonc
+  type: text
+  sources:
+    p_d6:
+    - LIBEL_FONC
+- reference: ADRESSE
+  field: ade_adresse
+  type: text
+  sources:
+    p_d6:
+    - ADRESSE
+- reference: COD_COMM
+  field: ade_cod_comm
+  type: identifier
+  sources:
+    p_d6:
+    - COD_COMM
+- reference: COD_WILAYA
+  field: ade_cod_wilaya
+  type: identifier
+  sources:
+    p_d6:
+    - COD_WILAYA
+- reference: ZIP_CODE
+  field: ade_zip_code
+  type: identifier
+  sources:
+    p_d6:
+    - ZIP_CODE
+- reference: DEBUT_CRID
+  field: ade_debut_crid
+  type: date
+  sources:
+    p_d6:
+    - DEBUT_CRID
+- reference: DEBUT_ASSU
+  field: ade_debut_assu
+  type: date
+  sources:
+    p_d6:
+    - DEBUT_ASSU
+- reference: DATE_ECHEA
+  field: ade_date_echea
+  type: date
+  sources:
+    p_d6:
+    - DATE_ECHEA
+- reference: DFIN_ASSUR
+  field: ade_dfin_assur
+  type: date
+  sources:
+    p_d6:
+    - DFIN_ASSUR
+- reference: DUREE_ASSU
+  field: ade_duree_assu
+  type: integer
+  sources:
+    p_d6:
+    - DUREE_ASSU
+- reference: FRANCHISE
+  field: ade_franchise
+  type: text
+  sources:
+    p_d6:
+    - FRANCHISE
+- reference: MNT_ASSUR
+  field: ade_mnt_assur
+  type: money
+  sources:
+    p_d6:
+    - MNT_ASSUR
+- reference: ECHEANCE
+  field: ade_echeance
+  type: text
+  sources:
+    p_d6:
+    - ECHEANCE
+- reference: PERD_ECHEA
+  field: ade_perd_echea
+  type: text
+  sources:
+    p_d6:
+    - PERD_ECHEA
+- reference: TYPE_ECHEA
+  field: ade_type_echea
+  type: text
+  sources:
+    p_d6:
+    - TYPE_ECHEA
+- reference: MONNAIE
+  field: ade_monnaie
+  type: text
+  sources:
+    p_d6:
+    - MONNAIE
+- reference: PERD_PRIME
+  field: ade_perd_prime
+  type: text
+  sources:
+    p_d6:
+    - PERD_PRIME
+- reference: ASSUR_TETE
+  field: ade_assur_tete
+  type: text
+  sources:
+    p_d6:
+    - ASSUR_TETE
+- reference: CANAL_VENT
+  field: ade_canal_vent
+  type: text
+  sources:
+    p_d6:
+    - CANAL_VENT
+- reference: STAT_CNTRA
+  field: ade_stat_cntra
+  type: text
+  sources:
+    p_d6:
+    - STAT_CNTRA
+- reference: SOUS_ST_CT
+  field: ade_sous_st_ct
+  type: text
+  sources:
+    p_d6:
+    - SOUS_ST_CT
+- reference: DATE_OP
+  field: ade_date_op
+  type: date
+  sources:
+    p_d6:
+    - DATE_OP
+- reference: D_DEBLOQ
+  field: ade_d_debloq
+  type: date
+  sources:
+    p_d6:
+    - D_DEBLOQ
+- reference: TAUX_CRED1
+  field: ade_taux_cred1
+  type: percent
+  sources:
+    p_d6:
+    - TAUX_CRED1
+- reference: TAUX_CRED2
+  field: ade_taux_cred2
+  type: percent
+  sources:
+    p_d6:
+    - TAUX_CRED2
+- reference: MNT_ACCOR
+  field: ade_mnt_accor
+  type: money
+  sources:
+    p_d6:
+    - MNT_ACCOR
+- reference: MNT_ACCOR1
+  field: ade_mnt_accor1
+  type: money
+  sources:
+    p_d6:
+    - MNT_ACCOR1
+- reference: MNT_ACCOR2
+  field: ade_mnt_accor2
+  type: money
+  sources:
+    p_d6:
+    - MNT_ACCOR2
+- reference: BLOQUE
+  field: ade_bloque
+  type: text
+  sources:
+    p_d6:
+    - BLOQUE
+- reference: BLOQUE1
+  field: ade_bloque1
+  type: text
+  sources:
+    p_d6:
+    - BLOQUE1
+- reference: BLOQUE2
+  field: ade_bloque2
+  type: text
+  sources:
+    p_d6:
+    - BLOQUE2
+- reference: NUMTR
+  field: ade_numtr
+  type: identifier
+  sources:
+    c_d6:
+    - NUMTR
+- reference: GL
+  field: ade_gl
+  type: identifier
+  sources:
+    c_d6:
+    - GL
+- reference: PART
+  field: ade_part
+  type: text
+  sources:
+    c_d6:
+    - PART
+- reference: MONTANT
+  field: ade_montant
+  type: money
+  sources:
+    c_d6:
+    - MONTANT
+- reference: CODEOP
+  field: ade_codeop
+  type: text
+  sources:
+    c_d6:
+    - CODEOP
+- reference: REF_CONTRAT
+  field: ade_ref_contrat
+  type: identifier
+  sources:
+    c_d6:
+    - REF_CONTRAT
+- reference: DAT_OP
+  field: ade_dat_op
+  type: date
+  sources:
+    c_d6:
+    - DAT_OP
+- reference: DIVERS
+  field: ade_divers
+  type: text
+  sources:
+    c_d6:
+    - DIVERS
+- reference: AGENCE_
+  field: ade_agence_
+  type: text
+  sources:
+    c_d6:
+    - AGENCE
+- reference: CODE_RESEAUX
+  field: ade_code_reseaux
+  type: identifier
+  sources:
+    c_d6:
+    - CODE_RESEAUX
+- reference: LIGNE
+  field: ade_ligne
+  type: text
+  sources:
+    c_d6:
+    - LIGNE
+- reference: LIGNE1
+  field: ade_ligne1
+  type: text
+  sources:
+    c_d6:
+    - LIGNE1
+- reference: TCD
+  field: ade_tcd
+  type: text
+  sources:
+    c_d6:
+    - TCD
+- reference: CLE
+  field: ade_cle
+  type: identifier
+  sources:
+    c_d6:
+    - CLE
+- reference: MON
+  field: ade_mon
+  type: text
+  sources:
+    c_d6:
+    - MON
+- reference: USER1
+  field: ade_user1
+  type: text
+  sources:
+    c_d6:
+    - USER1
+- reference: USERV
+  field: ade_userv
+  type: text
+  sources:
+    c_d6:
+    - USERV
+- reference: HEURE
+  field: ade_heure
+  type: text
+  sources:
+    c_d6:
+    - HEURE
+- reference: DATE_VAL
+  field: ade_date_val
+  type: date
+  sources:
+    c_d6:
+    - DATE_VAL
+- reference: DATE_ECH
+  field: ade_date_ech
+  type: date
+  sources:
+    c_d6:
+    - DATE_ECH
+- reference: T_SOLD
+  field: ade_t_sold
+  type: text
+  sources:
+    c_d6:
+    - T_SOLD
+- reference: SUPL
+  field: ade_supl
+  type: text
+  sources:
+    c_d6:
+    - SUPL
+- reference: RIB
+  field: ade_rib
+  type: identifier
+  sources:
+    c_d6:
+    - RIB
+- reference: DTSES
+  field: ade_dtses
+  type: date
+  sources:
+    c_d6:
+    - DTSES
+- reference: STAT
+  field: ade_stat
+  type: text
+  sources:
+    c_d6:
+    - STAT
+- reference: IUD
+  field: ade_iud
+  type: identifier
+  sources:
+    c_d6:
+    - IUD
+- reference: ID1
+  field: ade_id1
+  type: identifier
+  sources:
+    c_d6:
+    - ID1
+- reference: SUMPRIMEPOLICE
+  field: ade_sumprimepolice
+  type: money
+  sources:
+    c_d6:
+    - SUMPRIMEPOLICE
+- reference: NPART
+  field: ade_npart
+  type: identifier
+  sources:
+    c_d6:
+    - NPART
+- reference: FLAG_SUMPRIME
+  field: ade_flag_sumprime
+  type: text
+  sources:
+    c_d6:
+    - FLAG_SUMPRIME
+- reference: ID_STATPYMT
+  field: ade_id_statpymt
+  type: text
+  sources:
+    c_d6:
+    - ID_STATPYMT
+- reference: TAUX_SUBPRIME2
+  field: ade_taux_subprime2
+  type: percent
+  sources: {}
+- reference: SUBPRIME2
+  field: ade_subprime2
+  type: money
+  sources:
+    p_fit:
+    - SUBPRIME2
+    c_fit:
+    - SUBPRIME2
+- reference: STATUT_POLICE_ASSURANCE
+  field: ade_statut_police_assurance
+  type: text
+  sources:
+    p_fit:
+    - STATUT_POLICE_ASSURANCE
+    c_fit:
+    - STATUT_POLICE_ASSURANCE
+- reference: STATUT_MODIFICATION
+  field: ade_statut_modification
+  type: text
+  sources:
+    p_fit:
+    - STATUT_MODIFICATION
+    c_fit:
+    - STATUT_MODIFICATION
+- reference: PRIME_MODIFIE
+  field: ade_prime_modifie
+  type: money
+  sources:
+    p_fit:
+    - PRIME_MODIFIE
+    c_fit:
+    - PRIME_MODIFIE
+- reference: DATE_MODIFICATION
+  field: ade_date_modification
+  type: date
+  sources:
+    p_fit:
+    - DATE_MODIFICATION
+    c_fit:
+    - DATE_MODIFICATION
+- reference: CODE_C
+  field: ade_code_c
+  type: identifier
+  sources:
+    p_fit:
+    - CODE_C
+    c_fit:
+    - CODE_C
+- reference: SUPPRIMER
+  field: ade_supprimer
+  type: text
+  sources:
+    p_fit:
+    - SUPPRIMER
+    c_fit:
+    - SUPPRIMER
+- reference: Mois
+  field: ade_mois
+  type: text
+  sources:
+    p_fit:
+    - Mois
+    c_fit:
+    - Mois
+    imp:
+    - MOIS
+- reference: Type fichier
+  field: ade_type_fichier
+  type: text
+  sources:
+    p_fit:
+    - Type fichier
+    c_fit:
+    - Type fichier
+- reference: Année
+  field: ade_année
+  type: text
+  sources:
+    p_fit:
+    - Année
+    c_fit:
+    - Année
+- reference: DATE_EFFET_THEO
+  field: ade_date_effet_theo
+  type: date
+  sources:
+    imp:
+    - DATE_EFFET_THEO
+- reference: DOS_TYPE
+  field: ade_dos_type
+  type: text
+  sources:
+    imp:
+    - DOS_TYPE
+- reference: REMARQUE
+  field: ade_remarque
+  type: text
+  sources:
+    imp:
+    - REMARQUE

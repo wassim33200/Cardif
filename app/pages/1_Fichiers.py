@@ -28,8 +28,8 @@ st.set_page_config(page_title="Fichiers", page_icon="📁", layout="wide")
 st.title("1 · Vérifier les fichiers")
 etapes(1)
 st.caption(
-    "L'outil lit le nom du dossier pour la banque, et le nom du fichier pour le "
-    "produit et le mois. Chaque produit a ses propres colonnes : c'est lui qui "
+    "L'outil lit les dossiers et le nom du fichier pour retrouver la banque, le "
+    "produit et le mois (exemple : BNP / ADE IMMO / 03-2026). Le produit "
     "détermine le format attendu. Rien n'est encore ouvert à ce stade."
 )
 
@@ -59,6 +59,7 @@ rows = [{
     "mois": m.period or "—",
     "détecté par": {
         "numeric": "motif numérique", "month_name": "nom de mois",
+        "folder_numeric": "dossier du mois", "folder_month_name": "nom du dossier",
         "model": "modèle local", "unresolved": "non résolu",
     }.get(m.period_method, m.period_method),
     "état": STATUS_LABEL[status[str(m.path)]],

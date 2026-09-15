@@ -110,7 +110,12 @@ def check_required(frame: pd.DataFrame, config: Config, profile_name: str) -> li
     for name in profile.required:
         if name not in frame.columns:
             continue
-        missing = frame[frame[name].isna()]
+        required = pd.Series(True, index=frame.index)
+        if "source_format" in frame.columns:
+            for source in config.source_formats:
+                if profile_name in source.produits and name not in source.required:
+                    required &= frame["source_format"] != source.name
+        missing = frame[frame[name].isna() & required]
         for _, row in missing.iterrows():
             flags.append(Flag(
                 code="missing_required",
@@ -269,8 +274,20 @@ def check_period_coverage(frame: pd.DataFrame) -> list[Flag]:
         return []
 
     flags = []
-    grouped = frame.groupby(["banque", "mois_reception"])["source_file"].unique()
-    for (bank, period), files in grouped.items():
+    keys = ["banque", "mois_reception"]
+    coverage = frame
+    if "source_format" in frame.columns:
+        # If any stream is unidentified, retain the conservative bank/month check.
+        # Otherwise a renamed correction could evade it by losing its format match.
+        coverage = frame[keys + ["source_file", "source_format"]].drop_duplicates().copy()
+        unknown = coverage.groupby(keys, dropna=False)["source_format"].transform(
+            lambda values: values.isna().any()
+        )
+        coverage.loc[unknown, "source_format"] = None
+        keys.append("source_format")
+    grouped = coverage.groupby(keys, dropna=False)["source_file"].unique()
+    for group, files in grouped.items():
+        bank, period = group[:2]
         if len(files) < 2:
             continue
         names = ", ".join(sorted(Path(f).name for f in files))

@@ -51,7 +51,8 @@ qui le fait tourner. Pour arrêter, fermez-la.
 Deux règles, et c'est tout :
 
 1. **Un dossier par banque**, avec le nom de la banque dedans : `BNA 2025`
-2. **Le mois dans le nom du fichier** : `Ventes_Mars_2025.xlsx`
+2. **Le mois dans le nom du fichier ou d'un sous-dossier** :
+   `Ventes_Mars_2025.xlsx` ou `BNP/ADE IMMO/03-2026/ventes.xlsx`
 
 ```
 Ventes 2025/
@@ -63,7 +64,21 @@ Ventes 2025/
 ```
 
 Peu importe la façon d'écrire le mois : `Mars`, `mars`, `03`, `2025-03`
-fonctionnent tous. Le reste du nom n'a aucune importance.
+fonctionnent tous avec une année indiquée. `P_ADE_032026_T24.xlsx` fonctionne aussi.
+Vous pouvez sélectionner directement le dossier `BNP` : ses sous-dossiers produits
+puis mois sont parcourus automatiquement. Si le fichier et le dossier indiquent des
+mois différents, corrigez leurs noms avant de consolider.
+
+Pour **ADE IMMO**, les formats P/C T24, D6, FIT/FIIT et Imp fournis suivent le
+dictionnaire de 120 champs. Le nom du fichier permet de choisir la bonne
+correspondance. Les colonnes de sortie Excel suivent `CHAMP_REF` ; une case sans
+correspondance reste vide. `PRIME` et `MNT_PRIME` sont deux champs distincts.
+Le champ « Format source » permet de filtrer ces différents états dans vos rapports.
+Les avenants n'ont pas encore de dictionnaire : leur colonne était vide dans les
+captures reçues.
+
+Si une base ADE IMMO existe déjà, choisissez un **nouveau dossier de base** puis
+retraitez tous les fichiers sources : les nouvelles colonnes changent son format.
 
 ### Les trois étapes
 
@@ -78,6 +93,9 @@ demande à quoi elle correspond.
 > jamais redemandée. C'est pourquoi cette étape devient de plus en plus rapide
 > avec les mois.
 
+Pour les formats ADE IMMO reconnus, le dictionnaire par format est prioritaire.
+Une correction durable de leurs intitulés se fait dans `config/ade_dictionary.yaml`.
+
 **3 · Consolidation** — vous voyez le résultat **avant** que quoi que ce soit
 soit enregistré. Vérifiez l'onglet **Totaux par mois** contre les états envoyés
 par les banques, puis cliquez pour enregistrer.
@@ -86,8 +104,9 @@ Tant que vous n'avez pas cliqué, rien n'a été modifié.
 
 ### Dans Power BI
 
-Ouvrez le fichier **`fact_ventes.parquet`** du dossier de la base. Il contient
-toutes les banques et tous les mois, avec une colonne `banque` pour filtrer.
+Ouvrez les fichiers **`fact_*.parquet`** du dossier de la base, par exemple
+`fact_ade_immobilier.parquet`. Chaque fichier regroupe un produit, toutes banques
+et tous mois, avec une colonne `banque` pour filtrer.
 
 Marquez `dim_date.parquet` comme table de dates : c'est ce qui permet les
 comparaisons d'une année sur l'autre.

@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 from rapidfuzz import fuzz, process
 
-from .config import Config
+from .config import Config, SourceFormat
 from .coerce import to_date, to_number
 from .normalize import is_blank, normalize_header, normalize_loose
 
@@ -185,7 +185,7 @@ class Mapper:
         self.loose_seed = {
             normalize_loose(alias): canonical for alias, canonical in self.seed.items()
         }
-        self.candidates = list(config.schema_.fields)
+        self.candidates = [name for name, spec in config.schema_.fields.items() if not spec.scoped]
 
     def _exact(
         self, normalized: str, bank: str | None, produit: str | None = None
@@ -236,6 +236,7 @@ class Mapper:
         bank: str | None = None,
         leaf: str | None = None,
         produit: str | None = None,
+        source_format: SourceFormat | None = None,
     ) -> MappingResult:
         """Resolve a single header through the tiers.
 
@@ -255,6 +256,21 @@ class Mapper:
 
         if not normalized:
             result.reason = "column has no header text"
+            return result
+
+        if source_format is not None:
+            canonical = source_format.aliases.get(normalized)
+            if canonical is None and leaf:
+                canonical = source_format.aliases.get(normalize_header(leaf))
+            if canonical:
+                result.canonical = canonical
+                result.method = "exact"
+                result.confidence = 1.0
+                result.reason = f"source dictionary: {source_format.name}"
+                result.warnings = verify_against_content(canonical, profile, self.config)
+            else:
+                result.reason = f"header absent from source dictionary: {source_format.name}"
+            # A near match can mean another field (PRIME vs MNT_PRIME, for example).
             return result
 
         # --- tier 1 ---------------------------------------------------------------
@@ -319,6 +335,7 @@ class Mapper:
         bank: str | None = None,
         header_parts: list[list[str]] | None = None,
         produit: str | None = None,
+        source_format: SourceFormat | None = None,
     ) -> list[MappingResult]:
         """Resolve every header of a sheet, then reconcile conflicts between them.
 
@@ -332,7 +349,7 @@ class Mapper:
             parts = header_parts[index] if header_parts and index < len(header_parts) else None
             leaf = parts[-1] if parts and len(parts) > 1 else None
             results.append(
-                self.resolve_header(header, index, values, bank, leaf, produit)
+                self.resolve_header(header, index, values, bank, leaf, produit, source_format)
             )
 
         claims: dict[str, list[MappingResult]] = {}

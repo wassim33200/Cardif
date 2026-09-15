@@ -6,6 +6,7 @@ a clear error at startup instead of a mysterious empty column three steps later.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -49,6 +50,7 @@ class CanonicalField(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     expect: ContentExpectation = Field(default_factory=ContentExpectation)
     derive: list[DerivationRule] = Field(default_factory=list)
+    scoped: bool = False  # Dictionary-only fields must not affect other products.
 
     @field_validator("aliases")
     @classmethod
@@ -78,6 +80,7 @@ class ExportProfile(BaseModel):
     partenaires: list[str] = Field(default_factory=list)
     match: list[str] = Field(default_factory=list)
     aliases: dict[str, str] = Field(default_factory=dict)
+    labels: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("match")
     @classmethod
@@ -143,7 +146,24 @@ class Schema(BaseModel):
                 out[col] = self.fields[col].label
             else:
                 out[col] = self.derived_fields[col].label
+        out.update(profile.labels)
         return out
+
+
+class SourceFormat(BaseModel):
+    """An exact header dictionary for one named workbook format."""
+
+    name: str
+    pattern: str
+    produits: list[str]
+    aliases: dict[str, str]
+    required: list[str]
+
+    @field_validator("pattern")
+    @classmethod
+    def _valid_pattern(cls, value: str) -> str:
+        re.compile(value)
+        return value
 
 
 class Bank(BaseModel):
@@ -272,6 +292,7 @@ class Config(BaseModel):
     settings: Settings
     aliases: AliasStore
     config_dir: Path
+    source_formats: list[SourceFormat] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True, "arbitrary_types_allowed": True}
 
@@ -279,6 +300,15 @@ class Config(BaseModel):
         # Catching this at load turns a KeyError deep in the pipeline into a clear
         # message naming the line of configuration that is wrong.
         defaut = self.settings.warehouse.profile
+        for source in self.source_formats:
+            for code in source.produits:
+                if code not in self.schema_.profiles:
+                    raise ValueError(f"format {source.name}: unknown product {code}")
+                columns = set(self.schema_.profiles[code].columns)
+                if not set(source.aliases.values()) <= columns:
+                    raise ValueError(f"format {source.name}: mapping outside product columns")
+                if not set(source.required) <= columns:
+                    raise ValueError(f"format {source.name}: unknown required field")
         if defaut and defaut not in self.schema_.profiles:
             raise ValueError(
                 f"settings.yaml names the product {defaut!r}, which does not exist in "
@@ -300,6 +330,14 @@ class Config(BaseModel):
         if not code or code not in self.schema_.profiles:
             return {}
         return dict(self.schema_.profiles[code].aliases)
+
+    def source_format(self, filename: str, produit: str | None) -> SourceFormat | None:
+        stem = normalize_header(Path(filename).stem)
+        matches = [s for s in self.source_formats
+                   if produit in s.produits and re.fullmatch(s.pattern, stem)]
+        if len(matches) > 1:
+            raise ValueError(f"Several source formats match {filename!r}")
+        return matches[0] if matches else None
 
     def save_aliases(self) -> None:
         """Persist learned mappings back to disk."""
@@ -324,6 +362,8 @@ class Config(BaseModel):
         """
         seed: dict[str, str] = {}
         for name, field in self.schema_.fields.items():
+            if field.scoped:
+                continue
             # The canonical name and its label are themselves valid aliases.
             for alias in {*field.aliases, normalize_header(name), normalize_header(field.label)}:
                 if alias:
@@ -354,9 +394,45 @@ def load_config(config_dir: str | Path = "config") -> Config:
             "partenaires": bloc.get("partenaires", []),
             "match": bloc.get("match", []),
             "aliases": bloc.get("aliases", {}),
+            "labels": bloc.get("labels", {}),
         }
         for code, bloc in produits.items()
     }
+
+    source_formats = []
+    dictionary_path = config_dir / "ade_dictionary.yaml"
+    if dictionary_path.exists():
+        dictionary = _read("ade_dictionary.yaml")
+        reference = dictionary["columns"]
+        names = [c["field"] for c in reference]
+        labels = {c["field"]: c["reference"] for c in reference}
+        if len(set(names)) != len(names) or len(set(labels.values())) != len(names):
+            raise ValueError("ADE dictionary contains duplicate fields or references")
+        for column in reference:
+            donnees_schema["fields"].setdefault(column["field"], {
+                "label": column["reference"], "type": column["type"], "scoped": True,
+            })
+        donnees_schema["derived_fields"]["source_format"] = {
+            "label": "Format source", "type": "category",
+        }
+        for code in dictionary["produits"]:
+            profile = donnees_schema["profiles"][code]
+            profile["columns"] = names + [
+                c for c in profile["columns"] if c not in names
+            ] + ["source_format"]
+            profile["labels"] = labels
+        for name, spec in dictionary["formats"].items():
+            aliases = {}
+            for column in reference:
+                for header in column.get("sources", {}).get(name, []):
+                    key = normalize_header(header)
+                    if key in aliases and aliases[key] != column["field"]:
+                        raise ValueError(f"format {name}: conflicting header {header!r}")
+                    aliases[key] = column["field"]
+            source_formats.append(SourceFormat(
+                name=name, pattern=spec["pattern"], produits=dictionary["produits"],
+                aliases=aliases, required=spec["required"],
+            ))
 
     return Config(
         schema=Schema(**donnees_schema),
@@ -364,4 +440,5 @@ def load_config(config_dir: str | Path = "config") -> Config:
         settings=Settings(**_read("settings.yaml")),
         aliases=AliasStore(**_read("aliases.yaml")),
         config_dir=config_dir,
+        source_formats=source_formats,
     )
