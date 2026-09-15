@@ -15,7 +15,13 @@ Requirements:
 
 The script is intentionally self-contained: no configuration files, no network, no
 LLM, and no guesses based on the filename.  It processes every worksheet that contains
-an ADE IMMO header row and prints a JSON report at the end.
+an ADE IMMO header row only when worksheet selection is unambiguous, and prints a JSON
+report. Use --sheet "Ventes" to choose a worksheet, or --all-sheets to include several.
+Duplicate business rows block export until --keep-exact-duplicates is explicitly used.
+Invalid values and ambiguous rows block export; they are never silently discarded.
+Use --expected-rows 12345 --expected-prime 123456.78 to enforce your manual totals.
+The Contrôle tab contains per-source subtotals, without a second grand-total row.
+Keep source workbooks in the input folder and put your output outside that folder.
 """
 
 from __future__ import annotations
@@ -23,8 +29,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sys
+import tempfile
 import unicodedata
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -112,6 +120,8 @@ def canonical_header(value: object) -> str | None:
     }
     if header in exact:
         return exact[header]
+    if header == "type d assure":
+        return "Type d'assuré"
     # The CRD source heading is period-specific: "CRD au 31/01/2026", etc.
     if header == "crd" or header.startswith("crd au "):
         return "CRD"
@@ -197,8 +207,13 @@ def clean_sheet(raw: pd.DataFrame, source: Path, sheet: str) -> tuple[pd.DataFra
     if header_row is None:
         return None, "no ADE IMMO header row found"
 
-    # If a malformed export repeats a field, retain the physical column with the most
-    # populated values.  The choice is deterministic and reported in the terminal.
+    if len(mapping.values()) != len(set(mapping.values())):
+        raise ValueError(f"{source.name}/{sheet}: duplicate column headings; mapping ambiguous")
+    if not {"N° de police", "Prime BDD"} <= set(mapping.values()):
+        raise ValueError(f"{source.name}/{sheet}: policy or Prime BDD heading missing")
+    if any(normalise(v) == "ligne source" for v in raw.iloc[header_row]):
+        return None, "generated consolidation detected; excluded"
+
     by_field: dict[str, int] = {}
     data_after_header = raw.iloc[header_row + 1:].reset_index(drop=True)
     for index, field in mapping.items():
@@ -220,38 +235,59 @@ def clean_sheet(raw: pd.DataFrame, source: Path, sheet: str) -> tuple[pd.DataFra
         else:
             frame[field] = None
 
-    # A valid ADE sale must carry at least one identifier.  This removes blank gaps,
-    # footer totals and notes without using their amount as an arbitrary signal.
+    repeated_header = data_after_header.apply(
+        lambda row: sum(canonical_header(v) is not None for v in row) >= 6, axis=1
+    )
     has_content = frame[BUSINESS_COLUMNS].apply(lambda row: any(not is_blank(v) for v in row), axis=1)
     has_identifier = frame[list(IDENTIFIER_COLUMNS)].apply(
         lambda row: any(not is_blank(v) for v in row), axis=1
     )
-    contains_total_marker = frame[BUSINESS_COLUMNS].apply(
-        lambda row: any(normalise(v).startswith(TOTAL_MARKERS) for v in row if not is_blank(v)),
-        axis=1,
-    )
     identifier_is_total = frame[list(IDENTIFIER_COLUMNS)].apply(
-        lambda row: any(normalise(v).startswith(TOTAL_MARKERS) for v in row if not is_blank(v)),
+        lambda row: any(re.fullmatch(r"(?:total|sous total|cumul|somme)(?: general| generale)?", normalise(v)) for v in row if not is_blank(v)),
         axis=1,
     )
-    footer = contains_total_marker & (~has_identifier | identifier_is_total)
-    frame = frame[has_content & has_identifier & ~footer].copy()
+    footer = identifier_is_total & ~repeated_header
+    ambiguous = has_content & ~has_identifier & ~footer & ~repeated_header
+    if ambiguous.any():
+        positions = (frame.index[ambiguous] + header_row + 2).tolist()[:20]
+        raise ValueError(f"{source.name}/{sheet}: rows without identifiers require review: {positions}")
+    audit = {"rows_after_header": len(frame), "blank_rows": int((~has_content).sum()),
+             "repeated_headers": int(repeated_header.sum()), "footer_rows": int(footer.sum()),
+             "excluded_header_positions": (frame.index[repeated_header] + header_row + 2).tolist(),
+             "excluded_footer_positions": (frame.index[footer] + header_row + 2).tolist()}
+    frame = frame[has_content & ~footer & ~repeated_header].copy()
     if frame.empty:
         return None, "header found but no data rows remained after cleaning"
+    if frame["Prime BDD"].map(is_blank).any():
+        positions = (frame.index[frame["Prime BDD"].map(is_blank)] + header_row + 2).tolist()[:20]
+        raise ValueError(f"{source.name}/{sheet}: missing Prime BDD at rows {positions}; check source cells and formula caches")
 
     for field in NUMERIC_COLUMNS:
-        frame[field] = frame[field].map(parse_number)
+        original = frame[field]
+        converted = original.map(parse_number)
+        invalid = ~original.map(is_blank) & (converted.isna() | converted.map(lambda v: not is_blank(v) and not math.isfinite(v)))
+        if invalid.any():
+            positions = (frame.index[invalid] + header_row + 2).tolist()[:20]
+            raise ValueError(f"{source.name}/{sheet}: invalid numbers in {field}, rows {positions}")
+        frame[field] = converted
     for field in DATE_COLUMNS:
-        frame[field] = frame[field].map(parse_date)
+        original = frame[field]
+        converted = original.map(parse_date)
+        if (~original.map(is_blank) & converted.isna()).any():
+            raise ValueError(f"{source.name}/{sheet}: invalid dates in {field}")
+        frame[field] = converted
 
+    assert len(frame) + audit["blank_rows"] + audit["repeated_headers"] + audit["footer_rows"] == audit["rows_after_header"]
     # Parent folder is the reception month by business rule, regardless of dates inside
     # the file.  This captures delayed delivery of one or several historic months.
     frame["Mois de réception"] = source.parent.name
-    frame["Fichier source"] = source.name
+    frame["Fichier source"] = str(source.resolve())
     frame["Feuille source"] = sheet
     # pandas index zero is the first data row; Excel numbering starts at 1.
     frame["Ligne source"] = frame.index + header_row + 2
-    return frame.reset_index(drop=True), None
+    frame = frame.reset_index(drop=True)
+    frame.attrs["audit"] = audit
+    return frame, None
 
 
 def read_workbook(path: Path) -> Iterable[tuple[str, pd.DataFrame]]:
@@ -287,15 +323,7 @@ def control_table(frame: pd.DataFrame) -> pd.DataFrame:
             "Prime BDD - valeurs vides": ("Prime BDD", lambda values: values.isna().sum()),
         },
     ).reset_index()
-    total = pd.DataFrame([{
-        "Mois de réception": "TOTAL",
-        "Fichier source": "",
-        "Feuille source": "",
-        "Lignes": int(len(frame)),
-        "Prime BDD - somme": frame["Prime BDD"].sum(),
-        "Prime BDD - valeurs vides": int(frame["Prime BDD"].isna().sum()),
-    }])
-    return pd.concat([controls, total], ignore_index=True)
+    return controls
 
 
 def write_output(frame: pd.DataFrame, output: Path) -> tuple[int, pd.DataFrame]:
@@ -334,8 +362,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", type=Path, help="output .xlsx path")
     parser.add_argument(
         "--keep-exact-duplicates", action="store_true",
-        help="keep exact copies found in the same reception month (normally removed)",
+        help="explicitly retain duplicate business rows; default stops for review",
     )
+    parser.add_argument("--sheet", action="append", help="exact worksheet name; repeat for several sheets")
+    parser.add_argument("--all-sheets", action="store_true", help="explicitly include multiple data worksheets")
+    parser.add_argument("--expected-rows", type=int, help="refuse export unless this row count matches")
+    parser.add_argument("--expected-prime", type=float, help="refuse export unless Prime BDD matches within 0.01")
     parser.add_argument(
         "--strict", action="store_true",
         help="return an error if any workbook/sheet cannot be consolidated",
@@ -366,14 +398,40 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         for sheet_name, raw in sheets:
-            clean, reason = clean_sheet(raw, path, sheet_name)
+            header_row, _ = find_header_row(raw)
+            if header_row is not None and any(normalise(v) == "ligne source" for v in raw.iloc[header_row]):
+                file_report["sheets"].append({"sheet": sheet_name, "status": "skipped",
+                    "reason": "generated consolidation detected; excluded"})
+                continue
+            if args.sheet and sheet_name not in args.sheet:
+                continue
+            try:
+                clean, reason = clean_sheet(raw, path, sheet_name)
+            except (ValueError, TypeError, OverflowError) as exc:
+                failures += 1
+                file_report["sheets"].append({"sheet": sheet_name, "error": str(exc)})
+                print(str(exc), file=sys.stderr)
+                continue
             if clean is None:
                 file_report["sheets"].append({"sheet": sheet_name, "status": "skipped", "reason": reason})
                 continue
             frames.append(clean)
-            file_report["sheets"].append({"sheet": sheet_name, "status": "included", "rows": len(clean)})
+            file_report["sheets"].append({"sheet": sheet_name, "status": "included", "rows": len(clean),
+                                          "prime": float(clean["Prime BDD"].sum()), **clean.attrs["audit"]})
             print(f"OK   {path.name} | {sheet_name}: {len(clean)} rows")
+        included = sum(s.get("status") == "included" for s in file_report["sheets"])
+        if included > 1 and not (args.all_sheets or args.sheet):
+            failures += 1
+            file_report["error"] = "multiple data sheets: select --sheet NAME or explicitly use --all-sheets"
+        if not included and not any(s.get("reason", "").startswith("generated consolidation") for s in file_report["sheets"]):
+            failures += 1
+            file_report["error"] = "no usable data sheet"
         report["files"].append(file_report)
+
+    if failures:
+        print(json.dumps(report, ensure_ascii=False, indent=2), file=sys.stderr)
+        print("Export blocked: resolve the reported inputs; existing output was preserved.", file=sys.stderr)
+        return 2
 
     if not frames:
         print("No ADE IMMO data table was found; no output was written.", file=sys.stderr)
@@ -383,11 +441,28 @@ def main(argv: list[str] | None = None) -> int:
     consolidated = pd.concat(frames, ignore_index=True)[OUTPUT_COLUMNS]
     before = len(consolidated)
     if not args.keep_exact_duplicates:
-        # Identical copies in the same monthly delivery are almost always duplicate
-        # worksheets or resends.  A record in a different reception month is retained.
-        duplicate_key = BUSINESS_COLUMNS + ["Mois de réception"]
-        consolidated = consolidated.drop_duplicates(subset=duplicate_key, keep="first").reset_index(drop=True)
-    parts, controls = write_output(consolidated, output)
+        duplicates = consolidated.duplicated(subset=BUSINESS_COLUMNS, keep=False)
+        if duplicates.any():
+            print("Duplicate business rows require review. They may be legitimate monthly records or copies.", file=sys.stderr)
+            print(consolidated.loc[duplicates, PROVENANCE_COLUMNS].head(40).to_string(index=False), file=sys.stderr)
+            print("Use --keep-exact-duplicates only if these records should all be included.", file=sys.stderr)
+            return 2
+    if args.expected_rows is not None and len(consolidated) != args.expected_rows:
+        print(f"Row mismatch: actual={len(consolidated)}, expected={args.expected_rows}", file=sys.stderr)
+        return 2
+    prime = float(consolidated["Prime BDD"].sum())
+    if args.expected_prime is not None and abs(prime - args.expected_prime) > 0.0100001:
+        print(f"Prime mismatch: actual={prime}, expected={args.expected_prime}", file=sys.stderr)
+        return 2
+    output.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary_name = tempfile.mkstemp(suffix=".xlsx", dir=output.parent)
+    os.close(handle)
+    temporary = Path(temporary_name)
+    try:
+        parts, controls = write_output(consolidated, temporary)
+        os.replace(temporary, output)
+    finally:
+        temporary.unlink(missing_ok=True)
     report.update({
         "rows_read": before,
         "rows_written": len(consolidated),
