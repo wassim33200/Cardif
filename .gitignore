@@ -6,5 +6,4 @@ __pycache__/
 warehouse/
 warehouse/*.xlsx
 warehouse/*.parquet
-*.zip
 tests/fixtures/generated/
