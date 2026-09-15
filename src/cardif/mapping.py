@@ -5,7 +5,7 @@ Three tiers, cheapest first, so that the expensive one is rarely reached:
 1. **exact**  - the normalized header is already known, from ``schema.yaml`` or from
    ``aliases.yaml`` (which records every decision a human or the model has ever made)
 2. **fuzzy**  - ``rapidfuzz`` above a high threshold, for typos and word-order drift
-3. **model**  - the local LLM, consulted only for what is left, via an injected callable
+3. **model**  - the local LLM for what is left, plus a guarded whole-table shift audit
 
 Anything still unresolved, or resolved below the confidence floor, goes to the human.
 
@@ -30,6 +30,10 @@ from .normalize import is_blank, normalize_header, normalize_loose
 # Signature of the optional model tier, kept as a plain callable so that mapping has no
 # dependency on the LLM client and stays testable without one.
 ModelResolver = Callable[[str, "ColumnProfile", list[str]], "tuple[str | None, float, str]"]
+TableModelResolver = Callable[
+    [list["MappingResult"], list[str]],
+    "tuple[bool, list[tuple[int, str | None, float, str]], str]",
+]
 
 
 @dataclass
@@ -87,7 +91,11 @@ class MappingResult:
 
     @property
     def needs_review(self) -> bool:
-        return self.canonical is None or bool(self.warnings) or self.method == "model"
+        return (
+            self.canonical is None
+            or bool(self.warnings)
+            or self.method in {"model", "model-table"}
+        )
 
 
 def profile_column(values: list, sample_size: int = 5) -> ColumnProfile:
@@ -176,9 +184,15 @@ def verify_against_content(
 class Mapper:
     """Resolves headers to canonical fields, learning as it goes."""
 
-    def __init__(self, config: Config, model_resolver: ModelResolver | None = None):
+    def __init__(
+        self,
+        config: Config,
+        model_resolver: ModelResolver | None = None,
+        table_model_resolver: TableModelResolver | None = None,
+    ):
         self.config = config
         self.model_resolver = model_resolver
+        self.table_model_resolver = table_model_resolver
         # schema.yaml aliases form the floor; learned aliases override them because they
         # reflect a decision an actual human made about these actual banks.
         self.seed = config.seed_aliases_from_schema()
@@ -352,6 +366,24 @@ class Mapper:
                 self.resolve_header(header, index, values, bank, leaf, produit, source_format)
             )
 
+        # A shifted header row is a table-level problem: inspecting each heading in
+        # isolation cannot see that the values below "Date d'effet" are identifiers
+        # while the next physical column contains dates.  Ask the model for a complete,
+        # one-to-one plan.  It is accepted only when confidence and uniqueness gates
+        # pass, and normally only when it strictly reduces content incompatibilities.
+        suspicious = any(result.warnings for result in results if result.canonical)
+        audit_table = getattr(self.config.settings.llm, "table_shift_check", True)
+        if (suspicious or audit_table) and self.table_model_resolver is not None:
+            table_candidates = self.candidates
+            if produit and produit in self.config.schema_.profiles:
+                allowed = set(self.config.schema_.profiles[produit].columns)
+                table_candidates = [name for name in self.candidates if name in allowed]
+            shifted, proposals, explanation = self.table_model_resolver(
+                results, table_candidates
+            )
+            if shifted:
+                self._apply_table_plan(results, proposals, explanation)
+
         claims: dict[str, list[MappingResult]] = {}
         for result in results:
             if result.canonical:
@@ -375,6 +407,67 @@ class Mapper:
                 loser.reason = f"duplicate claim on '{canonical}'"
 
         return results
+
+    def _apply_table_plan(
+        self,
+        results: list[MappingResult],
+        proposals: list[tuple[int, str | None, float, str]],
+        explanation: str,
+    ) -> bool:
+        """Apply a model shift plan only when it is complete, unique and safer."""
+        floor = self.config.settings.llm.confidence_floor
+        by_index = {result.column_index: result for result in results}
+        changes: list[tuple[MappingResult, str | None, float, str, list[str]]] = []
+
+        for index, canonical, confidence, reason in proposals:
+            result = by_index.get(index)
+            if result is None or (
+                canonical is not None and canonical not in self.candidates
+            ):
+                continue
+            if confidence < floor or canonical == result.canonical:
+                continue
+            warnings = (
+                verify_against_content(canonical, result.profile, self.config)
+                if canonical is not None else []
+            )
+            changes.append((result, canonical, confidence, reason, warnings))
+
+        if not changes:
+            return False
+        replacements = {result.column_index: canonical for result, canonical, *_ in changes}
+        final_claims = [
+            replacements.get(result.column_index, result.canonical)
+            for result in results
+        ]
+        final_claims = [claim for claim in final_claims if claim is not None]
+        if len(final_claims) != len(set(final_claims)):
+            return False
+        before = sum(len(result.warnings) for result in results if result.canonical)
+        replaced = {id(result): warnings for result, _, _, _, warnings in changes}
+        after = sum(
+            len(replaced.get(id(result), result.warnings))
+            for result in results
+            if result.canonical or id(result) in replaced
+        )
+        complete_high_confidence = (
+            before == 0
+            and len(proposals) >= len([r for r in results if r.canonical])
+            and all(confidence >= 0.90 for _, _, confidence, _ in proposals)
+        )
+        if after >= before and not complete_high_confidence:
+            return False
+
+        for result, canonical, confidence, reason, warnings in changes:
+            old = result.canonical or "(non résolu)"
+            result.canonical = canonical
+            result.method = "model-table"
+            result.confidence = confidence
+            result.reason = (
+                f"shift correction: {old} -> {canonical}; {reason}; {explanation}"
+            )[:500]
+            result.warnings = warnings
+        return True
 
     def learn(self, result: MappingResult, canonical: str, bank: str | None = None) -> None:
         """Record a resolution so this header is never asked about again."""

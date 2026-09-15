@@ -1,8 +1,4 @@
-"""End-to-end runs, shared by the CLI and the Streamlit app.
-
-Keeping the orchestration here means the UI and the command line cannot drift apart:
-both call the same functions and see the same results.
-"""
+"""End-to-end runs used by the command-line interface and library callers."""
 
 from __future__ import annotations
 
@@ -15,7 +11,7 @@ import pandas as pd
 from .config import Config
 from .consolidate import FileResult, process_file
 from .filemeta import FileMeta, scan
-from .llm import LocalModel, make_resolver
+from .llm import LocalModel, make_resolver, make_table_resolver
 from .mapping import Mapper
 from .store import Warehouse
 from .validate import ValidationReport, validate
@@ -105,7 +101,11 @@ def build_mapper(config: Config, use_model: bool = True) -> tuple[Mapper, LocalM
         return Mapper(config), None
     if not model.available():
         return Mapper(config), None
-    return Mapper(config, make_resolver(config, model)), model
+    return Mapper(
+        config,
+        make_resolver(config, model),
+        make_table_resolver(config, model),
+    ), model
 
 
 def run(

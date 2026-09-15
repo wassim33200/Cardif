@@ -14,6 +14,8 @@ llm:
   sample_size: 5
   # Refuses any non-loopback base_url unless explicitly disabled. See llm.py.
   require_loopback: true
+  # Ask the model to audit column order when a whole table is available.
+  table_shift_check: true
 
 matching:
   # rapidfuzz token_set_ratio score above which a fuzzy hit is auto-accepted.

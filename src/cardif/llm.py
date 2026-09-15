@@ -5,6 +5,7 @@ number, and never decides what a value *is*. It answers two questions only:
 
 * "which canonical field does this header name mean?"
 * "which month does this filename refer to?"
+* "are this table's headers physically shifted relative to its values?"
 
 and every answer it gives is cached to ``aliases.yaml``, so a given question is asked at
 most once in the lifetime of the project.
@@ -187,6 +188,99 @@ class LocalModel:
             return ModelAnswer(None, confidence, reason or "model found no matching field")
         return ModelAnswer(value, confidence, reason)
 
+    def resolve_table_shift(
+        self,
+        mappings: list,
+        candidates: list[str],
+        field_descriptions: dict[str, str] | None = None,
+    ) -> tuple[bool, list[tuple[int, str | None, float, str]], str]:
+        """Detect and repair headers whose physical cells shifted relative to values.
+
+        Only structural profiles are sent unless sample sharing was explicitly enabled.
+        The caller independently verifies uniqueness, confidence, and whether the plan
+        actually reduces schema/content contradictions before using it.
+        """
+        descriptions = field_descriptions or {}
+        catalogue = "\n".join(
+            f"- {name}: {descriptions.get(name, '')}".rstrip(": ")
+            for name in candidates
+        )
+        columns = []
+        for mapping in mappings:
+            profile = mapping.profile.describe(
+                include_samples=self.settings.send_sample_values
+            ) if mapping.profile else "no profile"
+            columns.append(
+                f"[{mapping.column_index}] header={mapping.header!r}; "
+                f"current={mapping.canonical or 'none'}; contents={profile}; "
+                f"warnings={'; '.join(mapping.warnings) or 'none'}"
+            )
+
+        system = (
+            "You audit a whole French bank spreadsheet table for physically shifted "
+            "headers. A shift means values are under the wrong header because header "
+            "cells moved left or right. Do not call ordinary bad data a shift. Return "
+            "a one-to-one mapping by physical zero-based column index. Use only the "
+            "catalogue fields or none. A wrong correction corrupts financial data, so "
+            "set shift_detected=false unless the cross-column evidence is strong. JSON only."
+        )
+        user = (
+            "Columns in physical order:\n" + "\n".join(columns) +
+            f"\n\nCandidate fields:\n{catalogue}\n\n"
+            'Reply as {"shift_detected": <boolean>, "reason": "<short reason>", '
+            '"mappings": [{"index": <integer>, "field": "<name or none>", '
+            '"confidence": <0..1>, "reason": "<short reason>"}]}.'
+        )
+        item = {
+            "type": "object",
+            "properties": {
+                "index": {"type": "integer"},
+                "field": {"type": "string"},
+                "confidence": {"type": "number"},
+                "reason": {"type": "string"},
+            },
+            "required": ["index", "field", "confidence", "reason"],
+            "additionalProperties": False,
+        }
+        schema = {
+            "type": "object",
+            "properties": {
+                "shift_detected": {"type": "boolean"},
+                "reason": {"type": "string"},
+                "mappings": {"type": "array", "items": item},
+            },
+            "required": ["shift_detected", "reason", "mappings"],
+            "additionalProperties": False,
+        }
+        result = self._complete(system, user, schema)
+        if not result or result.get("shift_detected") is not True:
+            return False, [], str((result or {}).get("reason", "no shift found"))[:200]
+
+        proposals = []
+        seen: set[int] = set()
+        for proposal in result.get("mappings", []):
+            if not isinstance(proposal, dict):
+                continue
+            index = proposal.get("index")
+            field = str(proposal.get("field", "")).strip()
+            if not isinstance(index, int) or index in seen:
+                continue
+            seen.add(index)
+            if field in {"", "none", "null", "None"}:
+                canonical = None
+            elif field not in candidates:
+                # An invented field is not permission to clear a real mapping.
+                continue
+            else:
+                canonical = field
+            proposals.append((
+                index,
+                canonical,
+                _clamp(proposal.get("confidence", 0.0)),
+                str(proposal.get("reason", ""))[:200],
+            ))
+        return True, proposals, str(result.get("reason", ""))[:200]
+
     def resolve_period(self, filename: str) -> ModelAnswer:
         """Ask which month a filename refers to, when the patterns all missed.
 
@@ -271,5 +365,17 @@ def make_resolver(config: Config, model: LocalModel | None = None):
     def resolve(header: str, profile: ColumnProfile, candidates: list[str]):
         answer = model.resolve_header(header, profile, candidates, descriptions)
         return answer.value, answer.confidence, f"model: {answer.reason}"
+
+    return resolve
+
+
+def make_table_resolver(config: Config, model: LocalModel):
+    """Build the guarded table-level resolver used for suspected header shifts."""
+    descriptions = {
+        name: field.description for name, field in config.schema_.fields.items()
+    }
+
+    def resolve(mappings, candidates):
+        return model.resolve_table_shift(mappings, candidates, descriptions)
 
     return resolve

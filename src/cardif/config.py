@@ -197,6 +197,8 @@ class LLMSettings(BaseModel):
     send_sample_values: bool = False
     sample_size: int = Field(default=5, ge=0, le=50)
     require_loopback: bool = True
+    # Audit complete tables for physical header/value shifts, not only unknown names.
+    table_shift_check: bool = True
 
 
 class MatchingSettings(BaseModel):

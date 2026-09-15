@@ -282,8 +282,8 @@ def process_file(
 ) -> FileResult:
     """Run the whole pipeline over one workbook.
 
-    ``overrides`` maps a normalized header to a canonical field, letting the UI inject
-    the human's decisions without those decisions having to be learned first.
+    ``overrides`` maps a normalized header to a canonical field, letting a reviewed CLI
+    mapping file inject human decisions without changing the learned alias store.
     """
     # The product decides the shape of the output, and it is a property of the file,
     # not a global setting: one bank sends an ADE file and a SAHTI file in the same

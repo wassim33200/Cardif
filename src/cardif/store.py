@@ -187,7 +187,8 @@ class Warehouse:
         # detaille's columns, or the contract raises a spurious refusal.
         self.profile_name = profile_name or config.settings.warehouse.profile
         self.manifest = Manifest.load(self.root / MANIFEST_NAME)
-        self.skipped_xlsx: list[str] = []
+        self.excel_exports: list[Path] = []
+        self.excel_notes: list[str] = []
 
     # -- paths -------------------------------------------------------------------
 
@@ -320,7 +321,8 @@ class Warehouse:
             groupes.setdefault(produit, []).append((frame, source))
 
         resume = {"written": 0, "replaced": 0, "total": 0, "par_produit": {}}
-        self.skipped_xlsx = []
+        self.excel_exports = []
+        self.excel_notes = []
 
         for produit, elements in sorted(groupes.items()):
             entrant = pd.concat([f for f, _ in elements], ignore_index=True)
@@ -375,6 +377,13 @@ class Warehouse:
                     source, frame, produit
                 )
             self.manifest.schema_columns[produit] = list(combine.columns)
+            if self.config.settings.warehouse.write_xlsx:
+                labels = self.config.schema_.label_map(produit)
+                self.excel_exports.extend(
+                    self._write_excel_parts(
+                        combine.rename(columns=labels), chemin.with_suffix(".xlsx")
+                    )
+                )
             self._write_bank_extracts(combine, produit)
 
         if dry_run:
@@ -383,8 +392,10 @@ class Warehouse:
         self.manifest.profile = self.profile_name
         self.manifest.save(self.root / MANIFEST_NAME)
         self._write_dimensions(self.read_fact())
-        if self.skipped_xlsx:
-            resume["skipped_xlsx"] = list(self.skipped_xlsx)
+        resume["excel_files"] = [str(path) for path in self.excel_exports]
+        # Kept as a compatibility key for callers of 0.1.x.  These are not skipped
+        # data: the note explains that Excel delivery was split into numbered files.
+        resume["skipped_xlsx"] = list(self.excel_notes)
         return resume
 
     # -- dimensions and extracts --------------------------------------------------
@@ -399,39 +410,93 @@ class Warehouse:
         """
         directory = self.root / "par_banque"
         directory.mkdir(parents=True, exist_ok=True)
-        limit = self.config.settings.warehouse.xlsx_row_limit
-
         for bank, group in fact.groupby("banque"):
             group = group.reset_index(drop=True)
             group.to_parquet(self.bank_path(bank, produit), index=False)
             if not self.config.settings.warehouse.write_xlsx:
                 continue
-            if len(group) > limit:
-                # Truncating silently would be far worse than not writing at all, but
-                # saying nothing would leave a stale extract looking current.
-                self.skipped_xlsx.append(
-                    f"{bank} / {produit} : {len(group)} lignes dépassent la limite "
-                    f"Excel de {limit} ; le fichier .parquet contient tout."
-                )
-                self.bank_path(bank, produit, "xlsx").unlink(missing_ok=True)
-                continue
             labels = self.config.schema_.label_map(produit)
-            group.rename(columns=labels).to_excel(
-                self.bank_path(bank, produit, "xlsx"), index=False, sheet_name="Ventes"
+            self.excel_exports.extend(
+                self._write_excel_parts(
+                    group.rename(columns=labels), self.bank_path(bank, produit, "xlsx")
+                )
             )
+
+    def _write_excel_parts(self, frame: pd.DataFrame, path: Path) -> list[Path]:
+        """Write every row to Excel, splitting safely at Excel's worksheet limit.
+
+        Parquet is the source of truth.  Excel is a delivery format, so a large table
+        becomes ``name_part001.xlsx``, ``name_part002.xlsx``, ... rather than being
+        truncated or omitted.  Old parts are removed only after all new files have
+        been written successfully.
+        """
+        limit = self.config.settings.warehouse.xlsx_row_limit
+        path.parent.mkdir(parents=True, exist_ok=True)
+        chunks = max(1, (len(frame) + limit - 1) // limit)
+        if chunks > 1:
+            self.excel_notes.append(
+                f"{path.stem} : {len(frame)} lignes dépassent la limite Excel de "
+                f"{limit} ; export réparti en {chunks} fichiers .xlsx complets."
+            )
+        targets = (
+            [path]
+            if chunks == 1
+            else [path.with_name(f"{path.stem}_part{i:03d}{path.suffix}")
+                  for i in range(1, chunks + 1)]
+        )
+
+        written: list[Path] = []
+        for index, target in enumerate(targets):
+            piece = frame.iloc[index * limit:(index + 1) * limit]
+
+            def write_xlsx(temporary: Path, data: pd.DataFrame = piece) -> None:
+                with pd.ExcelWriter(temporary, engine="openpyxl") as writer:
+                    data.to_excel(writer, index=False, sheet_name="Données")
+
+            atomic_write(target, write_xlsx)
+            written.append(target)
+
+        # Clean stale files from an earlier export with a different number of parts.
+        keep = {p.resolve() for p in written}
+        stale = [path, *path.parent.glob(f"{path.stem}_part*.xlsx")]
+        for candidate in stale:
+            if candidate.exists() and candidate.resolve() not in keep:
+                candidate.unlink()
+        return written
+
+    def export_excel(self, produit: str | None = None) -> list[Path]:
+        """Regenerate lossless Excel delivery files from the Parquet warehouse."""
+        self.excel_exports = []
+        self.excel_notes = []
+        produits = [produit] if produit else self.produits_presents()
+        for code in produits:
+            fact = self.read_fact(code)
+            if fact.empty:
+                continue
+            labels = self.config.schema_.label_map(code)
+            self.excel_exports.extend(
+                self._write_excel_parts(
+                    fact.rename(columns=labels), self.fact_path(code).with_suffix(".xlsx")
+                )
+            )
+            self._write_bank_extracts(fact, code)
+        self._write_dimensions(self.read_fact())
+        return self.excel_exports
 
     def _write_dimensions(self, fact: pd.DataFrame) -> None:
         """Write the dimension tables Power BI needs to model the data properly."""
         self.root.mkdir(parents=True, exist_ok=True)
-        build_date_dimension(fact).to_parquet(self.root / "dim_date.parquet", index=False)
+        dimensions: dict[str, pd.DataFrame] = {
+            "dim_date": build_date_dimension(fact),
+        }
 
         if "banque" in fact.columns:
             codes = sorted(fact["banque"].dropna().unique())
             labels = {b.code: b.label for b in self.config.banks.banks}
-            pd.DataFrame({
+            dimensions["dim_banque"] = pd.DataFrame({
                 "banque": codes,
                 "libelle_banque": [labels.get(c, c) for c in codes],
-            }).to_parquet(self.root / "dim_banque.parquet", index=False)
+            })
 
         # The product dimension comes from the catalogue, not only from what happens to
         # be in the data, so a Power BI slicer lists every product from day one.
@@ -444,7 +509,14 @@ class Warehouse:
             }
             for code, profil in sorted(self.config.schema_.profiles.items())
         ]
-        pd.DataFrame(lignes).to_parquet(self.root / "dim_produit.parquet", index=False)
+        dimensions["dim_produit"] = pd.DataFrame(lignes)
+
+        for name, dimension in dimensions.items():
+            dimension.to_parquet(self.root / f"{name}.parquet", index=False)
+            if self.config.settings.warehouse.write_xlsx:
+                self.excel_exports.extend(
+                    self._write_excel_parts(dimension, self.root / f"{name}.xlsx")
+                )
 
 
 MOIS_FR = [

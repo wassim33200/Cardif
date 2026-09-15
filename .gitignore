@@ -4,4 +4,7 @@ __pycache__/
 *.egg-info/
 .venv/
 warehouse/
+warehouse/*.xlsx
+warehouse/*.parquet
+*.zip
 tests/fixtures/generated/

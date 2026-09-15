@@ -15,8 +15,10 @@ This tool turns that into one clean table per product, ready for Power BI —
 
 ## The design in one paragraph
 
-A deterministic pipeline does the work; a local model is consulted only for the header
-strings the rules cannot resolve, and every answer it gives is cached to a file you own.
+A deterministic pipeline does the work; a local model is consulted for unresolved headers
+and (when enabled) audits complete tables for physically shifted header/value columns.
+Every answer it gives is recorded in the audit output and can be replaced with a CLI
+override you own.
 Re-running a past month therefore costs zero model calls and produces byte-identical
 output. That is what makes the numbers defensible: every column traces to a rule or to a
 recorded human decision, not to a model's mood on a given day.
@@ -34,20 +36,7 @@ pip download -d wheels -e .      # on a connected machine
 pip install --no-index --find-links wheels -e .
 ```
 
-## Use
-
-For colleagues: double-click **`Installer.bat`** once, then **`Lancer Cardif.bat`**
-(Windows) or the `.command` equivalents on macOS. `GUIDE.md` is written for them; this
-README is not.
-
-The app opens on localhost, offers to generate sample data on first run, and walks
-through Fichiers → Colonnes → Consolidation.
-
-```bash
-streamlit run app/Accueil.py        # same thing, from a terminal
-```
-
-Or from the command line:
+## Use (CLI only)
 
 ```bash
 cardif scan     data/                          # what the folders and filenames say
@@ -55,10 +44,22 @@ cardif profile  data/ -o entetes.xlsx          # every header ever seen
 cardif run      data/ --audit audit.xlsx       # process, writing nothing
 cardif commit   data/ --audit audit.xlsx       # process and append to the warehouse
 cardif status                                  # what the warehouse holds
+cardif export                                   # regenerate complete Excel deliveries
 ```
 
 `run` never writes. `commit` is the only command that changes the warehouse, and it
 refuses to write when error-level flags were raised unless you pass `--allow-errors`.
+`commit` also stops on unresolved/content-mismatched/model-corrected columns unless you
+pass `--allow-review` after checking the detailed output or audit.
+Every run prints the mapping decision and content profile for every column. Use
+`--quiet` for a summary, `--no-model` to force deterministic rules, and
+`--overrides mapping.yaml` to apply reviewed decisions:
+
+```yaml
+mappings:
+  "mtt glob": prime_totale
+  "colonne a ignorer": __ignore__
+```
 
 ## Expected layout
 
@@ -169,12 +170,14 @@ warehouse/
   dim_date.parquet                contiguous calendar with French labels
   dim_produit.parquet             every product and its family, from the catalogue
   dim_banque.parquet
-  par_banque/CNEP_sahti.parquet   + .xlsx, extracts per bank AND per product
+  fact_ade_immobilier.xlsx        Excel delivery (split into _partNNN when needed)
+  dim_*.xlsx                      Excel-compatible dimensions
+  par_banque/CNEP_sahti.parquet   + .xlsx (also split when needed)
   _manifest.json                  which files are ingested, with content hashes
   audit.xlsx                      the full record (see below)
 ```
 
-**In Power BI, load the `fact_*` tables you need and relate them all to `dim_date`,
+**In Power BI, load the `fact_*` Parquet tables you need and relate them all to `dim_date`,
 `dim_banque` and `dim_produit`.** Each product table carries `banque`, `produit_code`
 and `mois_reception`, so a shared date and bank dimension gives you per-product reports
 and cross-product totals from the same model.
@@ -251,8 +254,7 @@ both makes the reporting lag measurable.
   (`llm.send_sample_values`).
 - Any non-loopback model endpoint is refused outright (`llm.require_loopback`).
 - The HTTP client is stdlib-only, so no dependency can introduce telemetry.
-- Streamlit's usage statistics are disabled and the app binds to `127.0.0.1` only
-  (`.streamlit/config.toml`).
+- The application has no web UI or telemetry; it is a local command-line tool.
 
 These are covered by tests in `tests/test_llm.py`, so the guarantee is checkable rather
 than a promise.
