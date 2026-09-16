@@ -22,6 +22,9 @@ Invalid values and ambiguous rows block export; they are never silently discarde
 Use --expected-rows 12345 --expected-prime 123456.78 to enforce your manual totals.
 The Contrôle tab contains per-source subtotals, without a second grand-total row.
 Keep source workbooks in the input folder and put your output outside that folder.
+Each run also writes individual diagnostic workbooks under cleaned_files/run-*/,
+mirroring the source folders. These retain all accepted rows, including duplicates,
+even if the combined export is blocked. See report.json for errors and skipped sheets.
 """
 
 from __future__ import annotations
@@ -326,12 +329,20 @@ def control_table(frame: pd.DataFrame) -> pd.DataFrame:
     return controls
 
 
-def write_output(frame: pd.DataFrame, output: Path) -> tuple[int, pd.DataFrame]:
+def write_output(frame: pd.DataFrame, output: Path, diagnostic_report: dict | None = None) -> tuple[int, pd.DataFrame]:
     """Write all rows and a reconciliation sheet to one Excel-compatible workbook."""
     output.parent.mkdir(parents=True, exist_ok=True)
     sheets = max(1, math.ceil(len(frame) / EXCEL_MAX_DATA_ROWS))
     controls = control_table(frame)
     with pd.ExcelWriter(output, engine="openpyxl", datetime_format="DD/MM/YYYY") as writer:
+        if diagnostic_report is not None:
+            pd.DataFrame({"Diagnostic": [
+                "Individual source export BEFORE global checks. Duplicate rows retained.",
+                "PARTIAL: some worksheets failed." if any("error" in s for s in diagnostic_report["sheets"])
+                else "Review worksheet selection and source totals before using these rows.",
+                diagnostic_report.get("error", ""),
+            ]}).to_excel(writer, sheet_name="À lire", index=False)
+            pd.DataFrame(diagnostic_report["sheets"]).to_excel(writer, sheet_name="Journal", index=False)
         for part in range(sheets):
             chunk = frame.iloc[part * EXCEL_MAX_DATA_ROWS:(part + 1) * EXCEL_MAX_DATA_ROWS]
             name = "ADE IMMO" if sheets == 1 else f"ADE IMMO {part + 1:03d}"
@@ -360,6 +371,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("input_folder", type=Path, help="ADE IMMO root containing month folders")
     parser.add_argument("-o", "--output", type=Path, help="output .xlsx path")
+    parser.add_argument("--cleaned-dir", type=Path,
+                        help="individual diagnostic exports (default: cleaned_files beside combined output)")
     parser.add_argument(
         "--keep-exact-duplicates", action="store_true",
         help="explicitly retain duplicate business rows; default stops for review",
@@ -383,10 +396,23 @@ def main(argv: list[str] | None = None) -> int:
         print("Output must use the .xlsx extension.", file=sys.stderr)
         return 2
 
-    report: dict[str, object] = {"input_folder": str(root), "output": str(output), "files": []}
+    cleaned_base = (args.cleaned_dir or output.parent / "cleaned_files").expanduser().resolve()
+    if root == cleaned_base or root.is_relative_to(cleaned_base):
+        print("Cleaned directory must not contain the input root.", file=sys.stderr)
+        return 2
+    sources = [p for p in input_files(root, output) if not p.resolve().is_relative_to(cleaned_base)]
+    cleaned_base.mkdir(parents=True, exist_ok=True)
+    cleaned_run = Path(tempfile.mkdtemp(prefix="run-", dir=cleaned_base))
+    print(f"Individual diagnostic exports: {cleaned_run}")
+
+    report: dict[str, object] = {"input_folder": str(root), "output": str(output),
+                               "cleaned_directory": str(cleaned_run),
+                               "purpose": "Diagnostic rows before global duplicate and expected-total checks; partial files are explicitly marked.",
+                               "files": []}
     frames: list[pd.DataFrame] = []
     failures = 0
-    for path in input_files(root, output):
+    for path in sources:
+        file_frames = []
         file_report: dict[str, object] = {"file": str(path), "sheets": []}
         try:
             sheets = list(read_workbook(path))
@@ -416,6 +442,7 @@ def main(argv: list[str] | None = None) -> int:
                 file_report["sheets"].append({"sheet": sheet_name, "status": "skipped", "reason": reason})
                 continue
             frames.append(clean)
+            file_frames.append(clean)
             file_report["sheets"].append({"sheet": sheet_name, "status": "included", "rows": len(clean),
                                           "prime": float(clean["Prime BDD"].sum()), **clean.attrs["audit"]})
             print(f"OK   {path.name} | {sheet_name}: {len(clean)} rows")
@@ -426,11 +453,26 @@ def main(argv: list[str] | None = None) -> int:
         if not included and not any(s.get("reason", "").startswith("generated consolidation") for s in file_report["sheets"]):
             failures += 1
             file_report["error"] = "no usable data sheet"
+        if file_frames:
+            relative = path.relative_to(root)
+            # Retain the original extension in the name to distinguish .xls/.xlsx siblings.
+            target = cleaned_run / relative.parent / f"{relative.name}.cleaned.xlsx"
+            diagnostic = pd.concat(file_frames, ignore_index=True)[OUTPUT_COLUMNS]
+            write_output(diagnostic, target, diagnostic_report=file_report)
+            partial = any("error" in s for s in file_report["sheets"])
+            file_report.update({"cleaned_file": str(target), "partial": partial,
+                                "diagnostic_rows": len(diagnostic),
+                                "diagnostic_prime": float(diagnostic["Prime BDD"].sum())})
+            print(f"CLEANED {'(PARTIAL) ' if partial else ''}{target} | "
+                  f"{len(diagnostic)} rows | Prime BDD={diagnostic['Prime BDD'].sum():.2f}")
         report["files"].append(file_report)
 
+    report_path = cleaned_run / "report.json"
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"Diagnostic report: {report_path}")
     if failures:
         print(json.dumps(report, ensure_ascii=False, indent=2), file=sys.stderr)
-        print("Export blocked: resolve the reported inputs; existing output was preserved.", file=sys.stderr)
+        print("Combined export blocked; individual diagnostics are available; existing combined output was preserved.", file=sys.stderr)
         return 2
 
     if not frames:
